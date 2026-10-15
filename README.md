@@ -125,10 +125,18 @@ Environment variables: `CONDUCTOR_PANEL_PORT` (4747), `CONDUCTOR_OFFICE_PORT` (4
 With `pixel-agents` installed, opening the Office page starts it and seats every available worker
 at a desk. Each `delegate` run makes that character work; it returns to idle afterwards.
 
-Conductor makes two changes to Pixel Agents. It enables `watchAllSessions` in
-`~/.pixel-agents/config.json`, because workers are external sessions. It also re-applies a small,
-idempotent label patch, so characters read Claude / Gemini / Cursor / Copilot / Local instead of
-status text.
+Conductor makes three changes to Pixel Agents:
+
+- It enables `watchAllSessions` in `~/.pixel-agents/config.json`, because workers are external
+  sessions.
+- It patches the UI so characters are labelled Claude / Gemini / Cursor / Copilot / Local instead
+  of status text.
+- It hides background sessions that are not your work. By default these are claude-mem's observer
+  sessions; choose the folders with `CONDUCTOR_OFFICE_HIDE` in `conductor.env` (comma-separated,
+  or `none`).
+
+The patch is rebuilt from the pristine bundle at every office start, so it survives
+`npm update -g pixel-agents`.
 
 Pixel Agents asks for a one-time approval before it adds its hooks to `~/.claude/settings.json`.
 That approval is yours to give in its UI.

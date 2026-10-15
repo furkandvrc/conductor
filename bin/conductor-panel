@@ -45,6 +45,7 @@ office_start() {
   up "$OURL" && { echo "office: running at $OURL"; return 0; }
   command -v pixel-agents >/dev/null || { echo "office: pixel-agents not installed — npm install -g pixel-agents" >&2; return 3; }
   # one-name labels (Claude / Gemini / Cursor …); re-applied after a pixel-agents update
+  [ -n "${CONDUCTOR_OFFICE_HIDE+x}" ] && export CONDUCTOR_OFFICE_HIDE   # folders to hide (from conductor.env)
   python3 -I "$here/scripts/patch-pixel-agents.py" >>"$ROOT/pixel-agents.log" 2>&1
   # workers are external sessions: Pixel Agents only adopts them with "Watch All Sessions" on
   [ "${CONDUCTOR_PIXEL_CONFIG:-1}" != 0 ] && python3 -I - "$HOME/.pixel-agents/config.json" <<'PY' >>"$ROOT/pixel-agents.log" 2>&1

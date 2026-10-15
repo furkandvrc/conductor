@@ -1,7 +1,7 @@
 {
   "name": "conductor",
   "displayName": "Conductor",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Claude orchestrates, cheaper worker models (Antigravity/Gemini, Cursor, GitHub Copilot, any OpenAI-compatible endpoint) do the volume work. Includes a local dashboard for Claude token usage and API-equivalent cost, delegated tasks, settings and a Pixel Agents office.",
   "author": {
     "name": "Furkan Divarcı",

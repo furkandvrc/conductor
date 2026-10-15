@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- The office hides background sessions that are not your work: claude-mem's observer sessions by
+  default, configurable with `CONDUCTOR_OFFICE_HIDE`. Their token cost still shows in the
+  dashboard.
+- The Pixel Agents patch is now rebuilt from the pristine bundle every time, so changes never stack.
+
 ## 0.2.0
 
 ### Added
