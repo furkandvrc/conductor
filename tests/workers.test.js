@@ -55,6 +55,7 @@ test('settings: legacy local.env migrates to endpoints.json', () => {
   const eps = S.endpoints();
   assert.equal(eps.length, 1);
   assert.equal(eps[0].id, 'local'); assert.equal(eps[0].apiKey, 'k1');
+  assert.ok(!fs.existsSync(process.env.CONDUCTOR_LOCAL_ENV), 'the secret is not left behind in local.env');
   assert.ok(fs.existsSync(path.join(process.env.CONDUCTOR_CONFIG_DIR, 'endpoints.json')));
   assert.equal((fs.statSync(path.join(process.env.CONDUCTOR_CONFIG_DIR, 'endpoints.json')).mode & 0o777).toString(8), '600');
 });

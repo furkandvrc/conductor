@@ -87,8 +87,7 @@ async function cliVersion(cli) {
 }
 async function workerInfo() {
   const eps = S.endpoints();
-  const out = [];
-  for (const w of S.allWorkers()) {
+  return Promise.all(S.allWorkers().map(async w => {
     const kind = w.endpoint ? 'endpoint' : w.custom ? 'custom' : 'builtin';
     const p = w.endpoint ? null : which(w.cli);
     const info = {
@@ -100,9 +99,8 @@ async function workerInfo() {
       const e = eps.find(x => x.id === w.id) || {};
       Object.assign(info, { url: e.url, has_apiKey: !!e.apiKey, has_cfId: !!e.cfId, has_cfSecret: !!e.cfSecret });
     }
-    out.push(info);
-  }
-  return out;
+    return info;
+  }));
 }
 const modelsCache = new Map();
 async function workerModels(id) {
