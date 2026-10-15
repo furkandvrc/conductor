@@ -25,6 +25,8 @@
   so no background shell loops remain.
 - Nested delegation is refused: a worker cannot call `delegate`, which prevents loops.
 - Office labels come from the registry.
+- Pixel Agents' 64 KB request limit is raised to 16 MB (localhost only). Its own Claude hook
+  posts whole tool inputs, and large ones were rejected with HTTP 413, which lost events.
 - The Claude Code worker runs with `--safe-mode`. It loads none of the user's hooks, plugins or
   `CLAUDE.md`, so its context stays lean, and it still uses the signed-in plan.
 - The Codex worker lists its models from `codex debug models`.

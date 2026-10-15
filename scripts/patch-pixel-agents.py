@@ -7,6 +7,9 @@
 2. Hidden sessions: background sessions that are not your work, by default claude-mem's observer
    sessions, get no character at all. Folder names to hide come from CONDUCTOR_OFFICE_HIDE
    (comma-separated; default "sessions,observer-sessions"; set it to "none" to hide nothing).
+3. Request size (server, dist/cli.js): Pixel Agents' own Claude hook posts whole tool inputs, and
+   its 64 KB body limit rejects large ones (HTTP 413), so those events are lost. The limit is raised
+   to 16 MB; the server only listens on 127.0.0.1.
 
 The bundle is minified, so each change is a regex. Every run starts from the pristine copy saved as
 <bundle>.orig, so the result never depends on earlier patches. If a Pixel Agents release changes the
@@ -32,6 +35,8 @@ LABEL = re.compile(
     r"overflow-hidden text-ellipsis block`,children:\2\.folderName\}\)"
 )
 ADD_AGENT = re.compile(r"addAgent\((\w),(\w),(\w),(\w),(\w),(\w),(\w)\)\{")
+BODY_LIMIT = re.compile(r"bodyLimit:\w+([,}])")
+BODY_BYTES = 16 * 1024 * 1024
 
 
 def hidden():
@@ -59,8 +64,36 @@ def bundle():
     return None
 
 
+def pristine_copy(f, marks=()):
+    """Return the unpatched text of f, saving it as f.orig the first time."""
+    if not os.path.exists(f + ".orig"):
+        current = open(f, encoding="utf-8").read()
+        if marks and current.startswith(marks):
+            return None
+        shutil.copy2(f, f + ".orig")
+    return open(f + ".orig", encoding="utf-8").read()
+
+
+def patch_server(dist):
+    f = os.path.join(dist, "cli.js")
+    if not os.path.exists(f):
+        return "server: not found"
+    pristine = pristine_copy(f)
+    out, n = BODY_LIMIT.subn(lambda m: f"bodyLimit:{BODY_BYTES}{m.group(1)}", pristine, count=1)
+    if n != 1:
+        return "server: body limit markup not recognised"
+    if out == open(f, encoding="utf-8").read():
+        return "server: up to date"
+    if "--check" in sys.argv:
+        return "server: needs update"
+    open(f, "w", encoding="utf-8").write(out)
+    return f"server: body limit {BODY_BYTES // (1024 * 1024)} MB"
+
+
 def main():
     f = bundle()
+    if f:
+        print("patch-pixel-agents: " + patch_server(os.path.dirname(os.path.dirname(os.path.dirname(f)))))
     if not f:
         print("patch-pixel-agents: pixel-agents not installed")
         return
