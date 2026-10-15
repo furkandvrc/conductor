@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# gen-image — generate an image with Gemini's image model through the Antigravity CLI (agy)
+# and write it straight into the project. agy saves images in its per-conversation
+# "brain" directory and its print mode returns before the image subagent finishes,
+# so we read the conversation id from the event stream and wait for the file there.
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: gen-image "<prompt>" <output.png|.jpg|.webp> [--transparent] [--variants N] [--timeout SEC]
+  --transparent  ask for a plain white background and remove it with rembg -> alpha PNG
+  --variants N   keep N candidates next to the output as name-2.png, name-3.png (default 1)
+EOF
+}
+[ $# -lt 2 ] && { usage >&2; exit 2; }
+prompt="$1"; out="$2"; shift 2
+transparent=0; variants=1; timeout_s=300
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --transparent) transparent=1 ;;
+    --variants|--timeout)
+      [ $# -ge 2 ] || { echo "gen-image: $1 needs a value" >&2; exit 2; }
+      if [ "$1" = --variants ]; then variants="$2"; else timeout_s="$2"; fi
+      shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "gen-image: unknown option $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+command -v agy >/dev/null || { echo "gen-image: agy (Antigravity CLI) not installed" >&2; exit 3; }
+case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
+ext="${out##*.}"; ext="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
+case "$ext" in png|jpg|jpeg|webp) ;; *) echo "gen-image: output must end in .png, .jpg, .jpeg or .webp" >&2; exit 2 ;; esac
+[ $transparent -eq 1 ] && [ "$ext" != png ] && { echo "gen-image: --transparent needs a .png output" >&2; exit 2; }
+mkdir -p "$(dirname "$out")"
+
+BRAIN="${AGY_BRAIN_DIR:-$HOME/.gemini/antigravity-cli/brain}"
+work="$(mktemp -d)"
+# lifecycle events for the panel
+here="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"  # resolve ~/.local/bin symlinks
+if [ -r "$here/scripts/lib-events.sh" ]; then . "$here/scripts/lib-events.sh"; else conductor_event() { :; }; fi
+worker=gemini model=image write=1 dir="$PWD" log="" ev_id="$(date +%Y%m%d-%H%M%S)-image-$$" t0=$(date +%s) result=""
+conductor_event start "[image] $prompt -> ${out#"$PWD"/}"
+on_exit() {
+  local rc=$?
+  rm -rf "$work"
+  conductor_event end "${result:-image generation failed (exit $rc)}" "$rc" $(( $(date +%s) - t0 ))
+  RUN_TASK="[image] $prompt -> ${out#"$PWD"/}" RUN_REPORT="${result:-image generation failed (exit $rc)}" python3 -I -c 'import json,os,sys,time
+a=sys.argv[1:]
+print(json.dumps({"id":a[0],"t":round(time.time(),3),"worker":"gemini","model":"image","write":1,"secs":int(a[1]),"rc":int(a[2]),
+  "dir":a[3],"project":os.path.basename(a[3].rstrip("/")),"log":"","out_bytes":0,"task":os.environ["RUN_TASK"][:1500],"report":os.environ["RUN_REPORT"][:1500]},ensure_ascii=False))' \
+    "$ev_id" $(( $(date +%s) - t0 )) "$rc" "$PWD" >>"${CONDUCTOR_HOME:-$HOME/.claude/conductor}/runs.jsonl" 2>/dev/null || true
+}
+trap on_exit EXIT
+bg=""; [ $transparent -eq 1 ] && bg=" Use a plain pure-white background with no shadow, no text, no border."
+ask="Use your image generation tool to create exactly $variants image(s) for this brief, then stop. Do not write code, do not run commands.$bg
+Brief: $prompt"
+
+# Run in an empty scratch dir so the agent cannot touch the project.
+( cd "$work" && agy -p "$ask" --mode accept-edits --output-format stream-json >"$work/events.ndjson" 2>"$work/err.log" )
+conv="$(python3 -I -c 'import json,sys
+for line in open(sys.argv[1]):
+    try: e=json.loads(line)
+    except Exception: continue
+    c=e.get("conversation_id") or (e.get(e.get("event","")) or {}).get("conversation_id")
+    if c: print(c); break' "$work/events.ndjson")"
+[ -z "$conv" ] && { echo "gen-image: no conversation id from agy"; tail -n 20 "$work/err.log"; exit 4; } >&2
+
+dirc="$BRAIN/$conv"
+deadline=$(( $(date +%s) + timeout_s )); last=""; stable=0
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  # name + size of every image so far (portable: no BSD/GNU stat differences)
+  cur="$(python3 -I -c 'import os,sys
+d=sys.argv[1]
+try: names=sorted(n for n in os.listdir(d) if n.lower().endswith((".png",".jpg",".jpeg",".webp")))
+except OSError: names=[]
+for n in names: print(os.path.getsize(os.path.join(d,n)), n)' "$dirc")"
+  n=$(printf '%s' "$cur" | grep -c . || true)
+  if [ "$n" -ge "$variants" ] && [ "$cur" = "$last" ]; then stable=$((stable+1)); else stable=0; fi
+  [ "$n" -gt 0 ] && [ $stable -ge 2 ] && break
+  last="$cur"; sleep 3
+done
+files=()  # no mapfile: macOS ships bash 3.2
+while IFS= read -r f; do files+=("$f"); done < <(find "$dirc" -maxdepth 1 -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) 2>/dev/null | sort)
+[ ${#files[@]} -eq 0 ] && { echo "gen-image: no image appeared in $dirc within ${timeout_s}s" >&2; exit 5; }
+
+fmt="$ext"; [ "$fmt" = jpg ] && fmt=jpeg
+emit() {  # src dst
+  local src="$1" dst="$2"
+  if [ $transparent -eq 1 ]; then
+    uvx --python 3.12 --from "rembg[cpu,cli]==2.0.67" rembg i "$src" "$dst" >/dev/null 2>&1 \
+      || { echo "gen-image: rembg failed for $src" >&2; return 1; }
+  else
+    src_ext="$(printf '%s' "${src##*.}" | tr '[:upper:]' '[:lower:]')"; [ "$src_ext" = jpg ] && src_ext=jpeg
+    if [ "$src_ext" = "$fmt" ]; then cp "$src" "$dst"
+    elif command -v sips >/dev/null; then sips -s format "$fmt" "$src" --out "$dst" >/dev/null 2>&1   # macOS
+    elif command -v magick >/dev/null; then magick "$src" "$dst"                                   # ImageMagick 7
+    elif command -v convert >/dev/null; then convert "$src" "$dst"                                 # ImageMagick 6
+    else echo "gen-image: cannot convert $src_ext to $fmt (install ImageMagick) — saving as .$src_ext" >&2; dst="${dst%.*}.$src_ext"; cp "$src" "$dst"; fi
+  fi
+  echo "$dst"
+}
+i=0
+for f in "${files[@]}"; do
+  i=$((i+1)); [ $i -gt "$variants" ] && break
+  if [ $i -eq 1 ]; then dst="$out"; else dst="${out%.*}-$i.$ext"; fi
+  emit "$f" "$dst" && result="${result:+$result, }${dst#"$PWD"/}"
+done
+result="image saved: $result"
+echo "[gen-image] conversation=$conv candidates=${#files[@]} source=$dirc"

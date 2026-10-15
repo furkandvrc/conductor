@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+# delegate — hand a bounded task to a cheaper worker model and print only its report.
+# Claude (the orchestrator) runs this through the Bash tool; the full transcript goes
+# to a log file so it never enters Claude's context unless Claude asks for it.
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: delegate <worker> [--write] [--model M] [--timeout SEC] [--max-lines N] [--dir D] [--] "<task>"
+       some-command | delegate local "<instruction>"      (stdin is appended as context)
+
+workers:
+  gemini   Antigravity CLI (agy)      Google AI Pro quota   default model claude-sonnet-5-5-medium
+           (alias: agy; also gemini-3.8-flash-high|low, claude-opus-5-5-*, gpt-oss-120b-medium)
+  cursor   Cursor Agent CLI           Cursor subscription   default model composer-2.5
+  copilot  GitHub Copilot CLI         Copilot subscription  default model auto
+  local    any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter…), text only
+           config: ~/.config/conductor/local.env (or the dashboard's Settings page)
+
+--write      let the worker edit files in --dir (default: read-only / plan mode)
+--timeout    seconds before the worker is killed (default 900)
+--max-lines  cap on printed report lines (default 60); the full output is always in the log
+workers  |  delegate status   (show which workers are usable)
+EOF
+}
+
+# user settings written by the dashboard (Ayarlar); explicit flags still win
+CONF_ENV="${CONDUCTOR_CONFIG:-$HOME/.config/conductor/conductor.env}"
+# shellcheck disable=SC1090
+[ -r "$CONF_ENV" ] && . "$CONF_ENV"
+ROOT_STATE="${CONDUCTOR_HOME:-$HOME/.claude/conductor}"
+LOG_DIR="$ROOT_STATE/logs"
+LOCAL_ENV="${CONDUCTOR_LOCAL_ENV:-$HOME/.config/conductor/local.env}"
+mkdir -p "$LOG_DIR"
+
+worker="${1:-}"; [ $# -gt 0 ] && shift
+case "$worker" in
+  ""|-h|--help|help) usage; exit 0 ;;
+  status|workers)
+    printf 'gemini  : %s\n' "$(command -v agy >/dev/null && echo ok || echo 'missing (install Antigravity CLI: agy)')"
+    printf 'cursor  : %s\n' "$(command -v cursor-agent >/dev/null && echo ok || echo 'missing (curl https://cursor.com/install -fsS | bash)')"
+    printf 'copilot : %s\n' "$(command -v copilot >/dev/null && echo ok || echo 'missing (npm i -g @github/copilot)')"
+    printf 'local   : %s\n' "$([ -r "$LOCAL_ENV" ] && echo "configured ($LOCAL_ENV)" || echo "not configured ($LOCAL_ENV)")"
+    exit 0 ;;
+  agy) worker=gemini ;;
+  gemini|cursor|copilot|local) ;;
+  *) echo "delegate: unknown worker '$worker'" >&2; usage >&2; exit 2 ;;
+esac
+
+write=0; model=""; timeout_s="${CONDUCTOR_TIMEOUT:-900}"; max_lines="${CONDUCTOR_MAX_LINES:-60}"; dir="$PWD"; task=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --write) write=1 ;;
+    --model|--timeout|--max-lines|--dir)
+      [ $# -ge 2 ] || { echo "delegate: $1 needs a value" >&2; exit 2; }
+      case "$1" in --model) model="$2" ;; --timeout) timeout_s="$2" ;; --max-lines) max_lines="$2" ;; --dir) dir="$2" ;; esac
+      shift ;;
+    --) shift; task="$*"; break ;;
+    -*) echo "delegate: unknown option $1" >&2; exit 2 ;;
+    *) task="${task:+$task }$1" ;;
+  esac
+  shift
+done
+
+stdin_ctx=""
+# only a real pipe or file is context; an inherited socket/tty would block `cat` forever
+if [ -p /dev/stdin ] || [ -f /dev/stdin ]; then stdin_ctx="$(cat)"; fi
+[ -z "$task" ] && [ -z "$stdin_ctx" ] && { echo "delegate: empty task" >&2; exit 2; }
+cd "$dir" || { echo "delegate: cannot cd to $dir" >&2; exit 2; }
+
+mode_line="READ-ONLY: do not create, modify or delete any file."
+[ $write -eq 1 ] && mode_line="You MAY edit files inside $dir. Keep changes minimal and on-task."
+contract="You are a worker agent. A supervising engineer delegated this task to you and will verify your work.
+Rules: work only inside $dir. $mode_line Never run git commit/push, never install packages, never read .env files or secrets/ directories.
+Be efficient: read only what the task needs.
+End your reply with a section titled '## REPORT' (at most 150 words): what you did, files changed (paths), open questions or anything you are unsure of."
+
+prompt="$contract
+
+## TASK
+$task"
+[ -n "$stdin_ctx" ] && prompt="$prompt
+
+## CONTEXT (from stdin)
+$stdin_ctx"
+
+ts="$(date +%Y%m%d-%H%M%S)"
+log="$LOG_DIR/$ts-$worker.log"
+out="$LOG_DIR/$ts-$worker.out"
+start=$(date +%s)
+: >"$out"; : >"$log"
+
+run_with_timeout() {  # macOS has no coreutils timeout
+  "$@" &
+  local pid=$!
+  ( sleep "$timeout_s" && kill -TERM "$pid" 2>/dev/null && sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
+  local watchdog=$!
+  wait "$pid"; local rc=$?
+  kill "$watchdog" 2>/dev/null; wait "$watchdog" 2>/dev/null
+  return $rc
+}
+
+# lifecycle events for the panel (conductor-panel)
+here="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"  # resolve ~/.local/bin symlinks
+if [ -r "$here/scripts/lib-events.sh" ]; then . "$here/scripts/lib-events.sh"; else conductor_event() { :; }; fi
+case "$worker" in
+  gemini) model="${model:-${CONDUCTOR_MODEL_GEMINI:-claude-sonnet-5-5-medium}}" ;;
+  cursor) model="${model:-${CONDUCTOR_MODEL_CURSOR:-composer-2.5}}" ;;
+  copilot) model="${model:-${CONDUCTOR_MODEL_COPILOT:-auto}}" ;;
+  local) [ -z "$model" ] && [ -r "$LOCAL_ENV" ] && model="$(. "$LOCAL_ENV"; echo "${LOCAL_MODEL:-}")"; model="${model:-auto}" ;;
+esac
+ev_id="$ts-$worker-$$"
+conductor_event start "$task"
+# every exit after the start event must close it, or the office shows the worker busy forever
+ended=0
+finish() { local rc=${2:-$?}; [ "$ended" = 1 ] && return; ended=1; kill $(jobs -p) 2>/dev/null; conductor_event end "${1:-aborted (exit $rc)}" "$rc" $(( $(date +%s) - start )); }
+trap 'finish' EXIT
+trap 'finish interrupted 130; exit 130' INT TERM
+
+case "$worker" in
+  gemini)
+    command -v agy >/dev/null || { echo "delegate: agy not installed" >&2; exit 3; }
+    model="${model:-claude-sonnet-5-5-medium}"
+    # read-only = default mode: headless agy soft-denies edits there. ("plan" mode only writes a plan.)
+    args=(--model "$model" --print-timeout "${timeout_s}s" --add-dir "$dir")
+    [ $write -eq 1 ] && args+=(--mode accept-edits)
+    # headless agy also soft-denies shell commands and may then print nothing; steer it to its own tools
+    prompt="Shell/terminal commands are NOT available in this session (they will be denied): use only your built-in file view, list, search and edit tools. Do not try to run, compile or test anything.
+$prompt"
+    run_with_timeout agy "${args[@]}" -p "$prompt" >"$out" 2>"$log"
+    rc=$? ;;
+  cursor)
+    command -v cursor-agent >/dev/null || { echo "delegate: cursor-agent not installed" >&2; exit 3; }
+    model="${model:-composer-2.5}"
+    args=(-p "$prompt" --output-format text --trust --model "$model")
+    [ $write -eq 0 ] && args+=(--mode ask)
+    run_with_timeout cursor-agent "${args[@]}" >"$out" 2>"$log"
+    rc=$? ;;
+  copilot)
+    command -v copilot >/dev/null || { echo "delegate: copilot not installed" >&2; exit 3; }
+    model="${model:-auto}"
+    args=(-p "$prompt" -s --no-ask-user --model "$model" --deny-tool 'shell(git push)' --deny-tool 'shell(git commit)')
+    if [ $write -eq 1 ]; then args+=(--allow-tool 'write'); else args+=(--deny-tool 'write'); fi
+    run_with_timeout copilot "${args[@]}" >"$out" 2>"$log"
+    rc=$? ;;
+  local)
+    [ -r "$LOCAL_ENV" ] || { echo "delegate: local worker not configured — create $LOCAL_ENV (see conductor README)" >&2; exit 3; }
+    # shellcheck disable=SC1090
+    . "$LOCAL_ENV"
+    [ $write -eq 1 ] && echo "delegate: local worker is text-only; --write ignored" >&2
+    base="${LOCAL_URL%/}"; base="${base%/v1}"
+    hdr=(-H "Content-Type: application/json")
+    [ -n "${LOCAL_API_KEY:-}" ] && hdr+=(-H "Authorization: Bearer $LOCAL_API_KEY")
+    [ -n "${CF_ACCESS_CLIENT_ID:-}" ] && hdr+=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET:-}")
+    if [ -z "$model" ] || [ "$model" = auto ]; then
+      # no model configured: use the first one the endpoint lists
+      model="$(curl -sS --max-time 10 "${hdr[@]}" "$base/v1/models" 2>/dev/null | python3 -I -c 'import json,sys
+try: print(sorted(m["id"] for m in json.load(sys.stdin)["data"])[0])
+except Exception: pass')"
+      [ -z "$model" ] && { echo "delegate: local endpoint lists no models — set LOCAL_MODEL (dashboard → Settings)" >&2; exit 3; }
+    fi
+    body="$(python3 -I -c 'import json,sys; print(json.dumps({"model":sys.argv[1],"stream":False,"messages":[{"role":"user","content":sys.stdin.read()}]}))' "$model" <<<"$prompt")"
+    curl -sS --max-time "$timeout_s" "${hdr[@]}" -d "$body" "$base/v1/chat/completions" >"$log.json" 2>"$log"
+    rc=$?
+    if [ $rc -eq 0 ]; then
+      python3 -I -c 'import json,re,sys
+raw=open(sys.argv[1],errors="replace").read()
+try: d=json.loads(raw)
+except ValueError:
+    txt=re.sub(r"\s+"," ",re.sub(r"<[^>]+>"," ",raw)).strip()
+    sys.stderr.write("local endpoint did not return JSON (blocked by a proxy/WAF or wrong URL?): "+txt[:300]+"\n"); sys.exit(4)
+if "choices" not in d: sys.stderr.write(json.dumps(d)[:500]+"\n"); sys.exit(4)
+print(d["choices"][0]["message"].get("content") or "")' "$log.json" >"$out" 2>>"$log"
+      rc=$?
+    fi ;;
+esac
+
+secs=$(( $(date +%s) - start ))
+# a worker that exits 0 but says nothing failed (e.g. agy auto-denied a tool in headless mode)
+[ $rc -eq 0 ] && ! grep -q '[^[:space:]]' "$out" && rc=5
+{ cat "$out"; echo; echo "----- stderr -----"; cat "$log"; } >"$log.full" 2>/dev/null && mv "$log.full" "$log"
+rm -f "$log.json"
+printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F_%T)" "$worker" "$model" "$write" "$secs" "$rc" >>"$ROOT_STATE/usage.tsv"
+rep_at=$(grep -n '^## REPORT' "$out" | tail -1 | cut -d: -f1)
+if [ -n "$rep_at" ]; then report="$(tail -n +"$((rep_at + 1))" "$out")"; else report="$(tail -n 12 "$out")"; fi
+[ $rc -ne 0 ] && report="$report
+$(tail -n 4 "$log")"
+ended=1
+conductor_event end "$report" "$rc" "$secs"
+# one JSON line per run for the dashboard (Görevler / Worker'lar)
+RUN_TASK="$task" RUN_REPORT="$report" python3 -I -c 'import json,os,sys,time
+a=sys.argv[1:]
+rec={"id":a[0],"t":round(time.time(),3),"worker":a[1],"model":a[2],"write":int(a[3]),"secs":int(a[4]),"rc":int(a[5]),
+     "dir":a[6],"project":os.path.basename(a[6].rstrip("/")) or a[6],"log":a[7],"out_bytes":int(a[8] or 0),
+     "task":os.environ.get("RUN_TASK","")[:1500],"report":os.environ.get("RUN_REPORT","")[:1500]}
+print(json.dumps(rec,ensure_ascii=False))' "$ev_id" "$worker" "$model" "$write" "$secs" "$rc" "$dir" "$log" "$(wc -c <"$out" | tr -d ' ')" >>"$ROOT_STATE/runs.jsonl" 2>/dev/null || true
+
+echo "[delegate] worker=$worker model=$model write=$write exit=$rc ${secs}s log=$log"
+lines=$(wc -l <"$out" | tr -d ' ')
+if [ "$lines" -gt "$max_lines" ]; then
+  # the REPORT section sits at the end; print from it if present, else the tail
+  rep=$(grep -n '^## REPORT' "$out" | tail -1 | cut -d: -f1)
+  if [ -n "$rep" ] && [ $((lines - rep)) -lt "$max_lines" ]; then
+    echo "[delegate] output truncated ($lines lines) — showing REPORT; full text in log"
+    tail -n +"$rep" "$out"
+  else
+    echo "[delegate] output truncated ($lines lines) — last $max_lines lines; full text in log"
+    tail -n "$max_lines" "$out"
+  fi
+else
+  cat "$out"
+fi
+[ $rc -ne 0 ] && { echo "[delegate] worker failed — stderr tail:"; tail -n 15 "$log"; }
+if [ $write -eq 1 ] && git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "[delegate] git status after worker:"; git -C "$dir" status --short | head -40
+fi
+rm -f "$out"
+exit $rc

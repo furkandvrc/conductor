@@ -1,0 +1,18 @@
+{
+  "name": "conductor",
+  "owner": {
+    "name": "Furkan Divarcı",
+    "url": "https://github.com/furkandvrc"
+  },
+  "plugins": [
+    {
+      "name": "conductor",
+      "source": "./",
+      "description": "Claude orchestrates; cheaper worker models do the volume work. Local usage/cost dashboard.",
+      "version": "0.2.0"
+    }
+  ],
+  "metadata": {
+    "description": "Conductor: Claude orchestrates cheaper worker models; local usage and cost dashboard."
+  }
+}

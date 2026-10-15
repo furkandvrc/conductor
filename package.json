@@ -1,0 +1,13 @@
+{
+  "name": "conductor-claude-plugin",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Claude Code plugin: Claude orchestrates, cheaper worker models do the volume work. Includes a local usage/cost dashboard.",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "selftest": "bash scripts/selftest.sh",
+    "dashboard": "node dashboard/server.js"
+  }
+}

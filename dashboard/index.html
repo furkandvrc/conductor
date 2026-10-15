@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conductor</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+  <nav class="side" aria-label="Conductor">
+    <div class="brand"><span class="logo" aria-hidden="true">◆</span><div><b>Conductor</b><small data-i18n="brand.sub">Opus orchestrates</small></div></div>
+    <a href="#/overview" data-page="overview"><span class="ic" aria-hidden="true">▦</span><span data-i18n="nav.overview">Overview</span></a>
+    <a href="#/claude" data-page="claude"><span class="ic" aria-hidden="true">◎</span><span data-i18n="nav.claude">Claude usage</span></a>
+    <a href="#/workers" data-page="workers"><span class="ic" aria-hidden="true">⚙</span><span data-i18n="nav.workers">Workers</span></a>
+    <a href="#/tasks" data-page="tasks"><span class="ic" aria-hidden="true">☰</span><span data-i18n="nav.tasks">Tasks</span></a>
+    <a href="#/office" data-page="office"><span class="ic" aria-hidden="true">▣</span><span data-i18n="nav.office">Office</span></a>
+    <a href="#/settings" data-page="settings"><span class="ic" aria-hidden="true">✎</span><span data-i18n="nav.settings">Settings</span></a>
+    <div class="side-foot">
+      <div class="idx" id="idxStatus" role="status"></div>
+      <div class="theme" role="group" aria-label="Language">
+        <button data-lang="en">EN</button><button data-lang="tr">TR</button>
+      </div>
+      <div class="theme" role="group" aria-label="Theme">
+        <button data-theme-set="auto" data-i18n-title="theme.auto">◐</button><button data-theme-set="light" data-i18n-title="theme.light">☀</button><button data-theme-set="dark" data-i18n-title="theme.dark">☾</button>
+      </div>
+    </div>
+  </nav>
+  <main id="main" tabindex="-1"></main>
+</div>
+<div class="tip" id="tip" role="tooltip" hidden></div>
+<dialog id="dlg" aria-labelledby="dlgTitle"><header><b id="dlgTitle"></b><button class="btn" id="dlgClose" data-i18n="common.close">Close</button></header><div id="dlgBody"></div></dialog>
+<script src="/i18n.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
