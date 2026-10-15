@@ -170,8 +170,14 @@ Conductor makes three changes to Pixel Agents:
 
 - It enables `watchAllSessions` in `~/.pixel-agents/config.json`, because workers are external
   sessions.
-- It patches the UI so characters are labelled Claude / Gemini / Cursor / Copilot / Local instead
-  of status text.
+- It patches the UI so characters are labelled by name (Claude, Gemini, Cursor, Codex, …) instead
+  of routine status text. Statuses that need you, "Needs approval" and "Waiting for input", still
+  show under the name.
+- It maps every worker to an office **area** named `Workers`, or `CONDUCTOR_OFFICE_AREA`. Paint
+  that area in the layout editor (Layout → Areas) around some desks; workers then sit there,
+  while Claude sessions prefer seats outside any area.
+- It raises Pixel Agents' request size limit from 64 KB to 16 MB, so large tool calls are not
+  dropped.
 - It hides background sessions that are not your work. By default these are claude-mem's observer
   sessions; choose the folders with `CONDUCTOR_OFFICE_HIDE` in `conductor.env` (comma-separated,
   or `none`).

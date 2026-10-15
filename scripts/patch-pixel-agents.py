@@ -4,6 +4,8 @@
 1. Labels: stock Pixel Agents shows a status line ("Using mcp__…", "Idle") over the session's folder
    name. Characters get one name instead: Conductor workers (folder ~/.claude/conductor/agents/<Worker>,
    names from CONDUCTOR_OFFICE_WORKERS, set by conductor-panel) keep their name, everything else reads "Claude".
+   Status lines that ask for the user ("Needs approval", "Waiting for input") are still shown under
+   the name; routine ones ("Using …", "Idle") are not.
 2. Hidden sessions: background sessions that are not your work, by default claude-mem's observer
    sessions, get no character at all. Folder names to hide come from CONDUCTOR_OFFICE_HIDE
    (comma-separated; default "sessions,observer-sessions"; set it to "none" to hide nothing).
@@ -48,7 +50,8 @@ def hidden():
 
 def helper():
     return (MARK + "var __cName=f=>" + json.dumps(workers()) + '.includes(f)?f:"Claude";'
-            + "var __cHide=f=>" + json.dumps(hidden()) + ".includes(f);\n")
+            + "var __cHide=f=>" + json.dumps(hidden()) + ".includes(f);"
+            + 'var __cAlert=s=>s==="Needs approval"||s==="Waiting for input";\n')
 
 
 def bundle():
@@ -106,7 +109,9 @@ def main():
     pristine = open(f + ".orig", encoding="utf-8").read()
 
     out, applied = pristine, []
-    out, n = LABEL.subn(lambda m: f"children:__cName({m.group(2)}.folderName)}}),!1", out)
+    # name on the first line; the status line only when it needs the user
+    out, n = LABEL.subn(lambda m: (f"children:__cName({m.group(2)}.folderName)}}),__cAlert({m.group(1)})&&(0,{m.group(3)}.jsx)"
+                                   f"(`span`,{{className:`text-2xs leading-none overflow-hidden text-ellipsis block`,children:{m.group(1)}}})"), out)
     if n == 1: applied.append("labels")
     out, n = ADD_AGENT.subn(lambda m: m.group(0) + f"if(__cHide({m.group(6)}))return;", out, count=1)
     if n == 1: applied.append("hide")

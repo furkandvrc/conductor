@@ -44,6 +44,7 @@ office_start() {
   CONDUCTOR_OFFICE_WORKERS="$("$here/bin/delegate" labels 2>/dev/null)"; export CONDUCTOR_OFFICE_WORKERS
   python3 -I "$here/scripts/patch-pixel-agents.py" >>"$ROOT/pixel-agents.log" 2>&1
   # workers are external sessions: Pixel Agents only adopts them with "Watch All Sessions" on
+  [ -n "${CONDUCTOR_OFFICE_AREA+x}" ] && export CONDUCTOR_OFFICE_AREA
   [ "${CONDUCTOR_PIXEL_CONFIG:-1}" != 0 ] && python3 -I - "$HOME/.pixel-agents/config.json" <<'PY' >>"$ROOT/pixel-agents.log" 2>&1
 import json, os, sys
 p = sys.argv[1]
@@ -54,6 +55,12 @@ changed = False
 for k in ("watchAllSessions", "alwaysShowLabels"):
     if k not in s: s[k] = True; changed = True
 if s.get("watchAllSessions") is False: print("office: watchAllSessions is off in", p, "- worker characters will not appear")
+# seat workers in the area named CONDUCTOR_OFFICE_AREA (default "Workers") when the layout has one;
+# Claude sessions prefer seats outside any area, so the two groups stay apart
+area = os.environ.get("CONDUCTOR_OFFICE_AREA", "Workers")
+m = s.setdefault("areaMappings", {})
+for label in [x for x in os.environ.get("CONDUCTOR_OFFICE_WORKERS", "").split(",") if x]:
+    if area and label not in m: m[label] = [area]; changed = True
 if changed:
     os.makedirs(os.path.dirname(p), exist_ok=True)
     json.dump(d, open(p, "w"), indent=2); os.chmod(p, 0o600)
