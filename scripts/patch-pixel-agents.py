@@ -9,7 +9,10 @@
 2. Hidden sessions: background sessions that are not your work, by default claude-mem's observer
    sessions, get no character at all. Folder names to hide come from CONDUCTOR_OFFICE_HIDE
    (comma-separated; default "sessions,observer-sessions"; set it to "none" to hide nothing).
-3. Request size (server, dist/cli.js): Pixel Agents' own Claude hook posts whole tool inputs, and
+3. Bubbles: the permission / turn-done speech bubbles are drawn on the canvas right where the name
+   label sits, so with "Always Show Labels" on the label covers them. While a character has a
+   bubble its label is lifted above it.
+4. Request size (server, dist/cli.js): Pixel Agents' own Claude hook posts whole tool inputs, and
    its 64 KB body limit rejects large ones (HTTP 413), so those events are lost. The limit is raised
    to 16 MB; the server only listens on 127.0.0.1.
 
@@ -37,6 +40,8 @@ LABEL = re.compile(
     r"overflow-hidden text-ellipsis block`,children:\2\.folderName\}\)"
 )
 ADD_AGENT = re.compile(r"addAgent\((\w),(\w),(\w),(\w),(\w),(\w),(\w)\)\{")
+# let d=a.state===R.TYPE?6:0,f=p.toScreenX(a.x),g=p.toScreenY(a.y+d-32); … style:{left:f,top:g-(O?34:28),
+LABEL_POS = re.compile(r"let (\w)=(\w)\.state===(\w)\.TYPE\?6:0,(\w)=(\w)\.toScreenX\(\2\.x\),(\w)=\5\.toScreenY\(\2\.y\+\1-32\);")
 BODY_LIMIT = re.compile(r"bodyLimit:\w+([,}])")
 BODY_BYTES = 16 * 1024 * 1024
 
@@ -55,6 +60,10 @@ def helper():
 
 
 def bundle():
+    dist = os.environ.get("CONDUCTOR_PIXEL_DIST")   # tests point this at a fixture
+    if dist:
+        files = [f for f in glob.glob(os.path.join(dist, "webview", "assets", "index-*.js")) if not f.endswith(".orig")]
+        return files[0] if files else None
     try:
         root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=20).stdout.strip()
     except Exception:
@@ -115,6 +124,15 @@ def main():
     if n == 1: applied.append("labels")
     out, n = ADD_AGENT.subn(lambda m: m.group(0) + f"if(__cHide({m.group(6)}))return;", out, count=1)
     if n == 1: applied.append("hide")
+    m = LABEL_POS.search(out)
+    if m:
+        v_d, v_a, _, v_left, v_cam, v_top = m.groups()   # minified names; never reuse `f` (the bundle path)
+        old = f"style:{{left:{v_left},top:{v_top}-("
+        i = out.find(old, m.end())
+        if 0 <= i < m.end() + 4000:
+            # bubble sprite is ~16 world px tall: when one is showing, anchor the label above it
+            out = out[:i] + f"style:{{left:{v_left},top:({v_a}.bubbleType?{v_cam}.toScreenY({v_a}.y+{v_d}-50):{v_top})-(" + out[i + len(old):]
+            applied.append("bubbles")
     out = helper() + out
 
     if out == current:

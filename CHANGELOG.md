@@ -27,6 +27,8 @@
 - Office labels come from the registry.
 - Office labels show "Needs approval" and "Waiting for input" under the name again; the 0.2.1
   label patch had hidden them.
+- Speech bubbles (permission, turn done) are visible again. With "Always Show Labels" on, the
+  name label covered them; it now moves above a character's bubble.
 - Workers are mapped to an office area named `Workers` (`CONDUCTOR_OFFICE_AREA`), so they sit
   together and away from Claude sessions.
 - Pixel Agents' 64 KB request limit is raised to 16 MB (localhost only). Its own Claude hook

@@ -172,7 +172,7 @@ Conductor makes three changes to Pixel Agents:
   sessions.
 - It patches the UI so characters are labelled by name (Claude, Gemini, Cursor, Codex, …) instead
   of routine status text. Statuses that need you, "Needs approval" and "Waiting for input", still
-  show under the name.
+  show under the name, and the label moves above a character's speech bubble so both are visible.
 - It maps every worker to an office **area** named `Workers`, or `CONDUCTOR_OFFICE_AREA`. Paint
   that area in the layout editor (Layout → Areas) around some desks; workers then sit there,
   while Claude sessions prefer seats outside any area.
