@@ -25,6 +25,11 @@
   so no background shell loops remain.
 - Nested delegation is refused: a worker cannot call `delegate`, which prevents loops.
 - Office labels come from the registry.
+- The Claude Code worker runs with `--safe-mode`. It loads none of the user's hooks, plugins or
+  `CLAUDE.md`, so its context stays lean, and it still uses the signed-in plan.
+- The Codex worker lists its models from `codex debug models`.
+- Host detection uses `PLUGIN_ROOT` (set only by Codex) and the plugin path. It works in
+  ephemeral sessions too. Verified end to end: Codex delegated a task to Claude Code.
 
 
 ## 0.2.1

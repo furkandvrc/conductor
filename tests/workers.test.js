@@ -38,6 +38,7 @@ test('registry: prompt routing (stdin vs argument) and output file', () => {
   const c = build('codex', false);
   assert.equal(c.stdin, 'TASK'); assert.equal(c.outFile, '/tmp/out'); assert.equal(c.args.at(-1), '-');
   assert.equal(build('claude', false).stdin, 'TASK');
+  assert.ok(build('claude', false).args.includes('--safe-mode'), 'claude worker runs isolated from user hooks/plugins');
   assert.ok(build('cursor', false).args.includes('TASK'));
   assert.ok(build('gemini', false).args.at(-1).endsWith('TASK'), 'agy gets the no-shell preamble + prompt');
 });

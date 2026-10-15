@@ -11,15 +11,15 @@ conf="${CONDUCTOR_CONFIG:-$HOME/.config/conductor/conductor.env}"
 [ -r "$conf" ] && . "$conf"
 command -v node >/dev/null 2>&1 || { echo "conductor: Node.js 18+ is required for the delegate command."; exit 0; }
 
-# Which host is running us? The hook payload's transcript path tells Claude Code from Codex.
+# Which host is running us?
 payload=""
 if [ -p /dev/stdin ] || [ -f /dev/stdin ]; then payload="$(head -c 65536)"; fi
 host="${CONDUCTOR_ORCHESTRATOR:-auto}"
 if [ "$host" = auto ]; then
-  case "$payload" in
-    *"/.codex/"*) host=codex ;;
-    *) if [ -n "${CODEX_HOME:-}${CODEX_THREAD_ID:-}" ]; then host=codex; else host=claude; fi ;;
-  esac
+  # Codex sets PLUGIN_ROOT (Claude Code only sets CLAUDE_PLUGIN_ROOT) and runs plugins from ~/.codex
+  host=claude
+  if [ -n "${PLUGIN_ROOT:-}" ]; then host=codex; fi
+  case "$here$payload" in *"/.codex/"*) host=codex ;; esac
 fi
 
 if [ "${CONDUCTOR_PANEL_AUTOSTART:-1}" != 0 ]; then ( "$here/bin/conductor-panel" start >/dev/null 2>&1 </dev/null & ); fi

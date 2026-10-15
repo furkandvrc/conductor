@@ -114,7 +114,7 @@ async function workerModels(id) {
   let data = { ok: true, models: w.model ? [w.model] : [] };
   if (w.listModels && which(w.cli)) {
     const r = await sh(w.cli, w.listModels.args, 20000);
-    const ids = [...new Set(r.out.split('\n').map(l => (l.match(w.listModels.re) || [])[1]).filter(Boolean))];
+    const ids = w.listModels.parse ? w.listModels.parse(r.out) : [...new Set(r.out.split('\n').map(l => (l.match(w.listModels.re) || [])[1]).filter(Boolean))];
     data = { ok: r.ok, models: ids, code: r.ok ? 'ok' : 'http_error', message: r.ok ? '' : r.out.slice(0, 160) };
   }
   modelsCache.set(id, { at: Date.now(), data });
