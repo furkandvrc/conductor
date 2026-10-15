@@ -1,27 +1,21 @@
 'use strict';
-// The "local" worker: any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, llama.cpp server,
-// OpenRouter, …), optionally behind a bearer key and/or Cloudflare Access service token.
-const { readEnv } = require('./config');
+// Talk to an OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, llama.cpp server, OpenRouter, …),
+// optionally behind a bearer key and/or a Cloudflare Access service token.
 
-function endpoint(file) {
-  const l = readEnv(file);
-  if (!l.LOCAL_URL) return null;
-  const headers = { Accept: 'application/json' };
-  if (l.LOCAL_API_KEY) headers.Authorization = 'Bearer ' + l.LOCAL_API_KEY;
-  if (l.CF_ACCESS_CLIENT_ID) {
-    headers['CF-Access-Client-Id'] = l.CF_ACCESS_CLIENT_ID;
-    headers['CF-Access-Client-Secret'] = l.CF_ACCESS_CLIENT_SECRET || '';
-  }
-  return { base: l.LOCAL_URL.replace(/\/+$/, '').replace(/\/v1$/, ''), headers, model: l.LOCAL_MODEL || '' };
+function headersFor(ep) {
+  const h = { Accept: 'application/json' };
+  if (ep.apiKey) h.Authorization = 'Bearer ' + ep.apiKey;
+  if (ep.cfId) { h['CF-Access-Client-Id'] = ep.cfId; h['CF-Access-Client-Secret'] = ep.cfSecret || ''; }
+  return h;
 }
+const baseOf = ep => String(ep.url || '').replace(/\/+$/, '').replace(/\/v1$/, '');
 
-// GET <base>/v1/models → { ok, status, ms, models[], message }
-async function listModels(file, timeoutMs = 8000) {
-  const ep = endpoint(file);
-  if (!ep) return { ok: false, code: 'not_configured', models: [] };
+// GET <base>/v1/models → { ok, status, ms, models[], code, message }
+async function listModels(ep, timeoutMs = 8000) {
+  if (!ep || !ep.url) return { ok: false, code: 'not_configured', models: [] };
   const t0 = Date.now();
   try {
-    const r = await fetch(ep.base + '/v1/models', { headers: ep.headers, signal: AbortSignal.timeout(timeoutMs) });
+    const r = await fetch(baseOf(ep) + '/v1/models', { headers: headersFor(ep), signal: AbortSignal.timeout(timeoutMs) });
     const txt = await r.text();
     let models = [];
     try { models = (JSON.parse(txt).data || []).map(m => m.id).filter(Boolean).sort(); } catch {}
@@ -36,4 +30,4 @@ async function listModels(file, timeoutMs = 8000) {
   }
 }
 
-module.exports = { endpoint, listModels };
+module.exports = { listModels, headersFor, baseOf };

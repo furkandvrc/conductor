@@ -1,6 +1,6 @@
 ---
 name: setup
-description: First-run setup and health check for the Conductor plugin. Detect which worker CLIs are installed, configure the local OpenAI-compatible endpoint, start the dashboard and the optional Pixel Agents office, and fix what is missing. Use on "/conductor:setup", "set up conductor", "conductor doesn't work", "configure workers", "conductor kurulum", "worker'ları ayarla".
+description: First-run setup and health check for the Conductor plugin in Claude Code or Codex. Detect which worker CLIs are installed, add OpenAI-compatible endpoints, choose the orchestrator, start the dashboard and the optional Pixel Agents office, and fix what is missing. Use on "set up conductor", "conductor doesn't work", "configure workers", "add a local model", "conductor kurulum", "worker'ları ayarla".
 ---
 
 # Conductor setup
@@ -11,33 +11,48 @@ nothing, and never touch credentials, without the user's go-ahead.
 1. **Requirements.** Check that `node` (version 18 or later), `python3`, `curl` and `bash` are on
    PATH. Report anything missing with the install command for the user's OS.
 
-2. **Workers.** Run `delegate status`. For each worker that is missing, tell the user what it
-   needs and that it is optional; at least one worker is enough.
+2. **Workers.** Run `delegate status`. In Codex, use the full path to `bin/delegate` printed at
+   session start. You only need one worker; the rest are optional.
 
-   | Worker | Install | First run |
+   | Worker | Install | Sign in |
    |---|---|---|
-   | gemini | Antigravity CLI `agy` (https://antigravity.google) | `agy` once, interactively, to sign in |
+   | claude | `npm install -g @anthropic-ai/claude-code` | `claude` |
+   | codex | `npm install -g @openai/codex` | `codex login` |
+   | gemini (Antigravity) | https://antigravity.google | `agy` |
    | cursor | `curl https://cursor.com/install -fsS \| bash` | `cursor-agent login` |
-   | copilot | `npm install -g @github/copilot` | `copilot`, then `/login` (or an authenticated `gh`) |
-   | local | any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, llama.cpp server, OpenRouter…) | dashboard → Settings → Local model |
+   | copilot | `npm install -g @github/copilot` | `copilot`, then `/login` |
+   | gemini-cli | `npm install -g @google/gemini-cli` | `GEMINI_API_KEY` |
+   | opencode | `npm install -g opencode-ai` | `opencode auth login` |
+   | qwen | `npm install -g @qwen-code/qwen-code` | first run |
 
-   Commands that need an interactive login must be run by the user. Suggest the `! <command>`
-   prefix so the output lands in the session.
+   Sign-ins are interactive, so the user must run them. In Claude Code, suggest the
+   `! <command>` prefix. A worker that is installed but signed out fails at run time; it shows
+   "last run failed" in `delegate list`.
 
-3. **Local model (optional).** Never ask the user to paste an API key into the chat. Send them to
-   the dashboard instead: Settings → Local model. There they enter the URL and the key, then use
-   **Load models** and **Test connection**. The dashboard stores secrets in
-   `~/.config/conductor/local.env` (mode 600). After they confirm, check the endpoint with
-   `delegate local "Reply with exactly: OK"`.
+3. **Endpoints (optional).** For any OpenAI-compatible API (Ollama, LM Studio, vLLM, llama.cpp
+   server, OpenRouter…), send the user to the dashboard: Workers → **Add an endpoint**. They can
+   add as many as they like, each with its own key and model. Never ask for API keys in the chat.
 
-4. **Dashboard.** Run `conductor-panel start`, then give the user http://127.0.0.1:4747. Its
-   Overview page shows a setup checklist with whatever is still missing.
+4. **Custom CLIs (optional).** To add another headless CLI, the user adds it to
+   `~/.config/conductor/workers.json` under `custom`. Arguments are substituted per argv item,
+   never through a shell:
 
-5. **Office (optional).** The office needs Pixel Agents: `npm install -g pixel-agents`. Opening the
-   Office page starts it. Pixel Agents asks for one-time approval to add hooks to
-   `~/.claude/settings.json`. Only the user can approve that, from the Office page; do not click
-   it for them.
+   ```json
+   { "custom": [ { "id": "aider", "label": "Aider", "cmd": "aider",
+       "args": ["--message", "{prompt}", "--model", "{model}"],
+       "readArgs": ["--dry-run"], "writeArgs": ["--yes-always", "--no-auto-commits"],
+       "goodAt": "small, precise edits" } ] }
+   ```
 
-6. **Smoke test.** Run one cheap read-only task on an available worker, for example
-   `delegate cursor "In one sentence, what does README.md describe?"`. Confirm that it appears on
-   the dashboard's Tasks page.
+5. **Orchestrator.** On the dashboard, open Settings → Orchestrator. There the user can install
+   Conductor into Claude Code and/or Codex (one click each) and choose who orchestrates;
+   "Automatic" detects it per session. The orchestrator never delegates to itself. In Codex, the
+   user must approve the plugin's hook once when Codex asks.
+
+6. **Dashboard and office.** Run `conductor-panel start` and give the user
+   http://127.0.0.1:4747. The Office page needs `npm install -g pixel-agents`. Pixel Agents' own
+   hook approval is for the user to give in its UI.
+
+7. **Smoke test.** Run one cheap read-only task on an available worker, for example
+   `delegate <worker> "In one sentence, what does README.md describe?"`. Confirm that it appears on
+   the Tasks page.

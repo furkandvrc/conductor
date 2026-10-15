@@ -32,13 +32,8 @@ stop() {
 }
 
 # ── office (Pixel Agents) ──
-roster() {  # seat every usable worker as an idle character
-  local w=()
-  command -v agy >/dev/null && w+=(Gemini)
-  command -v cursor-agent >/dev/null && w+=(Cursor)
-  command -v copilot >/dev/null && w+=(Copilot)
-  [ -r "${CONDUCTOR_LOCAL_ENV:-$HOME/.config/conductor/local.env}" ] && w+=(Local)
-  [ ${#w[@]} -gt 0 ] && python3 -I "$here/scripts/pixel-bridge.py" roster "${w[@]}" >/dev/null 2>&1
+roster() {  # seat every enabled, usable worker as an idle character
+  "$here/bin/delegate" roster >/dev/null 2>&1
   return 0
 }
 office_start() {
@@ -46,6 +41,7 @@ office_start() {
   command -v pixel-agents >/dev/null || { echo "office: pixel-agents not installed — npm install -g pixel-agents" >&2; return 3; }
   # one-name labels (Claude / Gemini / Cursor …); re-applied after a pixel-agents update
   [ -n "${CONDUCTOR_OFFICE_HIDE+x}" ] && export CONDUCTOR_OFFICE_HIDE   # folders to hide (from conductor.env)
+  CONDUCTOR_OFFICE_WORKERS="$("$here/bin/delegate" labels 2>/dev/null)"; export CONDUCTOR_OFFICE_WORKERS
   python3 -I "$here/scripts/patch-pixel-agents.py" >>"$ROOT/pixel-agents.log" 2>&1
   # workers are external sessions: Pixel Agents only adopts them with "Watch All Sessions" on
   [ "${CONDUCTOR_PIXEL_CONFIG:-1}" != 0 ] && python3 -I - "$HOME/.pixel-agents/config.json" <<'PY' >>"$ROOT/pixel-agents.log" 2>&1

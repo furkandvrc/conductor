@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- **Worker registry.** Codex, Claude Code, Gemini CLI, OpenCode and Qwen Code join Antigravity,
+  Cursor and Copilot. Custom CLIs can be defined in `workers.json`; `{prompt}`, `{model}` and
+  `{dir}` are substituted per argument.
+- **Multiple OpenAI-compatible endpoints**, each with its own name, URL, secrets, model and role.
+  The single `local.env` from 0.2 is migrated automatically.
+- **Codex plugin** (`.codex-plugin/plugin.json`). Codex can orchestrate and delegate to Claude
+  Code and the other workers. The session-start hook detects the host from the transcript path,
+  excludes the host from its own worker list, and gives Codex the full path of `delegate`.
+- **Orchestrator setting** (automatic, Claude Code or Codex), with one-click installation into
+  each host from Settings.
+- **Workers page as a management screen**: turn workers on or off; set model (loaded from the
+  CLI or `/v1/models`) and role; add, edit, test and delete endpoints.
+- `delegate list`, `delegate models <worker>`, and a "last run failed" warning (for example an
+  expired login) in the list given to the orchestrator.
+
+### Changed
+
+- `delegate` is now Node (`lib/delegate.js`) behind the same command. Heartbeats run in-process,
+  so no background shell loops remain.
+- Nested delegation is refused: a worker cannot call `delegate`, which prevents loops.
+- Office labels come from the registry.
+
+
 ## 0.2.1
 
 - The office hides background sessions that are not your work: claude-mem's observer sessions by

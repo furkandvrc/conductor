@@ -91,18 +91,6 @@ test('config: values that could break out of a sourced env file are rejected', (
   assert.equal((fs.statSync(f).mode & 0o777).toString(8), '600');
 });
 
-test('config: local secrets are write-only, blank keeps, null clears', () => {
-  const dir = tmp(), f = path.join(dir, 'l.env');
-  assert.deepEqual(cfg.applyLocal(f, { LOCAL_URL: 'https://llm.example.com', LOCAL_API_KEY: 'sk-abc' }), []);
-  assert.deepEqual(cfg.publicLocal(f), { LOCAL_URL: 'https://llm.example.com', LOCAL_MODEL: '', has_LOCAL_API_KEY: true, has_CF_ACCESS_CLIENT_ID: false, has_CF_ACCESS_CLIENT_SECRET: false });
-  cfg.applyLocal(f, { LOCAL_API_KEY: '' });
-  assert.equal(cfg.readEnv(f).LOCAL_API_KEY, 'sk-abc');
-  cfg.applyLocal(f, { LOCAL_API_KEY: null });
-  assert.equal(cfg.readEnv(f).LOCAL_API_KEY, undefined);
-  assert.ok(cfg.applyLocal(f, { LOCAL_URL: 'javascript:alert(1)' }).length);
-  assert.ok(cfg.applyLocal(f, { LOCAL_API_KEY: "a'b" }).length);
-});
-
 test('config: pricing overrides are validated', () => {
   const dir = tmp(), f = path.join(dir, 'p.json');
   assert.deepEqual(cfg.applyPricing(f, { 'claude-opus-6': { in: 3, out: 15, cr: 0.3 } }), []);

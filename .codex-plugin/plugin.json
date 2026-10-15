@@ -1,0 +1,30 @@
+{
+  "name": "conductor",
+  "version": "0.3.0",
+  "description": "Orchestrate cheaper worker models (Claude Code, Antigravity/Gemini, Cursor, GitHub Copilot, OpenCode, Qwen, any OpenAI-compatible endpoint) from Codex, with a local dashboard for usage, tasks and settings.",
+  "author": {
+    "name": "Furkan Divarcı",
+    "url": "https://github.com/furkandvrc"
+  },
+  "homepage": "https://github.com/furkandvrc/conductor",
+  "repository": "https://github.com/furkandvrc/conductor",
+  "license": "MIT",
+  "keywords": [
+    "orchestration",
+    "delegation",
+    "multi-agent",
+    "claude-code",
+    "dashboard"
+  ],
+  "skills": "./skills/",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Conductor",
+        "category": "Developer tools",
+        "defaultPrompt": "Set up Conductor and show me which workers I can delegate to."
+      },
+      "onboardingSkill": "setup"
+    }
+  }
+}

@@ -1,30 +1,40 @@
 #!/usr/bin/env bash
-# Prints a few lines into Claude's context at session start: which workers are usable.
-# Kept deliberately short — it is paid for in every session. Also makes sure the dashboard is
-# running (CONDUCTOR_PANEL_AUTOSTART=0 to opt out); the office (Pixel Agents) starts when its
-# dashboard page is opened, or here when CONDUCTOR_OFFICE_AUTOSTART=1.
+# SessionStart hook (Claude Code and Codex). Prints a few lines into the orchestrator's context:
+# which workers it can delegate to and what each is good at. Kept short: it is paid for in every
+# session. Also starts the dashboard (CONDUCTOR_PANEL_AUTOSTART=0 to opt out) and, with
+# CONDUCTOR_OFFICE_AUTOSTART=1, the Pixel Agents office. Must never fail or block the session.
 here="$(cd "$(dirname "$0")/.." && pwd)"
+# a worker started by `delegate` must not be told it is an orchestrator
+[ "${CONDUCTOR_ROLE:-}" = worker ] && exit 0
 conf="${CONDUCTOR_CONFIG:-$HOME/.config/conductor/conductor.env}"
 # shellcheck disable=SC1090
 [ -r "$conf" ] && . "$conf"
-if [ "${CONDUCTOR_PANEL_AUTOSTART:-1}" != 0 ]; then
-  ( "$here/bin/conductor-panel" start >/dev/null 2>&1 </dev/null & )
+command -v node >/dev/null 2>&1 || { echo "conductor: Node.js 18+ is required for the delegate command."; exit 0; }
+
+# Which host is running us? The hook payload's transcript path tells Claude Code from Codex.
+payload=""
+if [ -p /dev/stdin ] || [ -f /dev/stdin ]; then payload="$(head -c 65536)"; fi
+host="${CONDUCTOR_ORCHESTRATOR:-auto}"
+if [ "$host" = auto ]; then
+  case "$payload" in
+    *"/.codex/"*) host=codex ;;
+    *) if [ -n "${CODEX_HOME:-}${CODEX_THREAD_ID:-}" ]; then host=codex; else host=claude; fi ;;
+  esac
 fi
-if [ "${CONDUCTOR_OFFICE_AUTOSTART:-0}" = 1 ]; then
-  ( "$here/bin/conductor-panel" office start >/dev/null 2>&1 </dev/null & )
-fi
-have() { command -v "$1" >/dev/null 2>&1; }
-w=()
-have agy && w+=("gemini")
-have cursor-agent && w+=("cursor")
-have copilot && w+=("copilot")
-[ -r "${CONDUCTOR_LOCAL_ENV:-$HOME/.config/conductor/local.env}" ] && w+=("local")
+
+if [ "${CONDUCTOR_PANEL_AUTOSTART:-1}" != 0 ]; then ( "$here/bin/conductor-panel" start >/dev/null 2>&1 </dev/null & ); fi
+if [ "${CONDUCTOR_OFFICE_AUTOSTART:-0}" = 1 ]; then ( "$here/bin/conductor-panel" office start >/dev/null 2>&1 </dev/null & ); fi
+
 dash="http://127.0.0.1:${CONDUCTOR_PANEL_PORT:-4747}"
-if [ ${#w[@]} -eq 0 ]; then
-  echo "conductor: no worker models are set up yet. If the user wants to delegate work to cheaper models, suggest /conductor:setup. Dashboard: $dash"
+# Claude Code puts the plugin's bin/ on PATH; Codex does not, so give it the full path.
+dcmd="delegate"; [ "$host" != claude ] && dcmd="$here/bin/delegate"
+workers="$(node "$here/lib/delegate.js" list --for "$host" 2>/dev/null)"
+if [ -z "$workers" ]; then
+  echo "conductor: no worker models are set up yet. If the user wants to delegate work to cheaper models, suggest the conductor setup skill. Dashboard: $dash"
   exit 0
 fi
-img=""; have agy && img=" Images: conductor:image (\`gen-image\`)."
-echo "conductor: you are the orchestrator. Cheaper workers available via the \`delegate\` command: ${w[*]}."
-echo "Before reading many files, bulk-editing, reviewing a large diff or writing commit messages, load the conductor:delegate skill and hand the volume work off; you plan and verify.$img Dashboard (usage, cost, tasks, settings, office): $dash (\`conductor-panel open\`)."
+echo "conductor: you are the orchestrator. Hand volume work (reading many files, mechanical edits, large-diff reviews, commit messages) to these workers with \`$dcmd <worker> \"<task>\"\` and keep planning, decisions and verification yourself; follow the conductor delegate skill. Available workers:"
+echo "$workers"
+command -v agy >/dev/null 2>&1 && echo "Images: \`$here/bin/gen-image \"<prompt>\" <out.png>\` (conductor image skill)."
+echo "Dashboard (usage, cost, tasks, settings, office): $dash"
 exit 0

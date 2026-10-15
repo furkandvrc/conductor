@@ -188,3 +188,16 @@ dialog header { display: flex; justify-content: space-between; align-items: cent
 .clamp1 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 tbody tr.click:focus-visible td { background: var(--surface-2); outline: none; }
 .wcard dd.mono { font-size: 12px; }
+
+/* 0.3: worker management */
+.wcard .top .grow { flex: 1; min-width: 0; }
+.wcard .top .switch { margin-left: 6px; flex: none; }
+.wcard.dim { opacity: .72; }
+.wcard.add { border-style: dashed; }
+.pill.tiny { font-size: 11px; padding: 0 6px; font-weight: 500; color: var(--ink-3); }
+.form.compact { margin-top: 12px; gap: 8px 12px; grid-template-columns: minmax(110px, 140px) minmax(0, 1fr); }
+.epform { margin-top: 4px; }
+.grow-r { margin-left: auto; }
+.mt { margin-top: 14px; }
+pre.out { background: var(--surface-2); padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--surface); padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 60; }

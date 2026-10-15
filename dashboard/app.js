@@ -77,13 +77,15 @@ const TOKEN_SERIES = () => [
   { key: 'cw', label: t('tok.cw'), color: 'var(--s3)' },
   { key: 'cr', label: t('tok.cr'), color: 'var(--s4)' },
 ];
-const WK = {
-  gemini: { label: 'Gemini', color: 'var(--w-gemini)' },
-  cursor: { label: 'Cursor', color: 'var(--w-cursor)' },
-  copilot: { label: 'Copilot', color: 'var(--w-copilot)' },
-  local: { label: 'Local', color: 'var(--w-local)' },
-};
-const WK_ORDER = ['gemini', 'cursor', 'copilot', 'local'];
+// Worker identity: label + a categorical slot in fixed registry order (validated palette, 8 slots),
+// filled from /api/workers. Unknown or overflow workers fall back to neutral grey.
+let WK = {}, WK_ORDER = [];
+function setWorkers(list) {
+  WK = {}; WK_ORDER = [];
+  const ranked = [...list.filter(w => w.enabled && w.available), ...list.filter(w => !(w.enabled && w.available))];
+  ranked.forEach((w, i) => { WK[w.id] = { label: w.label, color: i < 8 ? `var(--s${i + 1})` : 'var(--sx)' }; WK_ORDER.push(w.id); });
+}
+const loadWorkers = async () => { const r = await api('/api/workers'); setWorkers(r.workers); return r.workers; };
 
 // ───────────────────────── tooltip ─────────────────────────
 function showTip(e, title, rows, total) {
@@ -208,6 +210,7 @@ function budgetMeter(spent, limit) {
 }
 const seg = (options, current, onChange) => h('div', { class: 'seg', role: 'group' }, options.map(([v, label]) => h('button', { class: v === current ? 'on' : '', 'aria-pressed': String(v === current), onclick: () => onChange(v) }, label)));
 const card = (title, sub, ...body) => h('section', { class: 'card' }, h('h2', {}, title, sub ? h('small', {}, sub) : null), body);
+const card2 = card;
 function wpill(id) { const w = WK[id] || { label: id, color: 'var(--sx)' }; return h('span', { class: 'pill' }, h('i', { class: 'sw', style: `background:${w.color}` }), w.label); }
 const status = r => r.rc === 0 ? h('span', { class: 'ok' }, t('common.ok')) : h('span', { class: 'fail' }, t('common.fail', { rc: r.rc }));
 
@@ -239,12 +242,12 @@ function setupCard(st) {
     h('ul', { class: 'checklist' }, st.items.map(i => h('li', { class: i.ok ? 'done' : '' },
       h('span', { class: i.ok ? 'ok' : (i.required ? 'fail' : 'note'), 'aria-hidden': 'true' }, i.ok ? '✓' : (i.required ? '✗' : '○')), ' ', t('setup.' + i.id),
       !i.ok && i.hint ? h('code', { class: 'mono' }, i.hint) : null,
-      !i.ok && i.id === 'local' ? h('a', { href: '#/settings' }, t('setup.configure')) : null,
+      !i.ok && i.id === 'endpoint_any' ? h('a', { href: '#/workers' }, t('setup.configure')) : null,
       !i.ok && i.id === 'pixel_hooks' ? h('a', { href: '#/office' }, t('setup.configure')) : null))));
 }
 
 async function pageOverview() {
-  const [u, runsR, set, setup] = await Promise.all([api('/api/usage?days=30'), api('/api/runs?limit=5000'), api('/api/settings'), api('/api/setup')]);
+  const [u, runsR, set, setup] = await Promise.all([api('/api/usage?days=30'), api('/api/runs?limit=5000'), api('/api/settings'), api('/api/setup'), loadWorkers()]);
   setIdx(u.indexing);
   const runs = runsR.runs, since30 = Date.now() / 1000 - 30 * 86400;
   const r30 = runs.filter(r => r.t >= since30), ok30 = r30.filter(r => r.rc === 0).length;
@@ -325,35 +328,52 @@ async function pageClaude() {
 }
 
 async function pageWorkers() {
-  const [w, runsR, set] = await Promise.all([api('/api/workers'), api('/api/runs?limit=5000'), api('/api/settings')]);
+  const [ws, runsR] = await Promise.all([loadWorkers(), api('/api/runs?limit=5000')]);
   const runs = runsR.runs, since = Date.now() / 1000 - 30 * 86400;
-  const c = set.conductor;
-  const defaults = { gemini: c.CONDUCTOR_MODEL_GEMINI || 'claude-sonnet-5-5-medium', cursor: c.CONDUCTOR_MODEL_CURSOR || 'composer-2.5', copilot: c.CONDUCTOR_MODEL_COPILOT || 'auto', local: set.local.LOCAL_MODEL || t('wk.auto') };
-  const host = u => { try { return new URL(u).host; } catch { return u; } };
-  const cards = WK_ORDER.map(id => {
-    const info = w.workers[id] || {}, mine = runs.filter(r => r.worker === id && r.t >= since), ok = mine.filter(r => r.rc === 0).length;
-    const outTok = mine.reduce((a, r) => a + (r.out_bytes || 0), 0) / 4;
-    return h('section', { class: 'card wcard' },
-      h('div', { class: 'top' }, h('div', { class: 'av', style: `background:${WK[id].color}`, 'aria-hidden': 'true' }, WK[id].label[0]),
-        h('div', {}, h('b', {}, WK[id].label), h('div', { class: 'note' }, `${t('wk.role.' + id)} · ${info.via || ''}`)),
-        h('span', { class: 'pill st' }, h('span', { class: 'dot ' + (info.available ? 'on' : 'off') }), info.available ? t('wk.ready') : (id === 'local' ? t('wk.notConfigured') : t('wk.missing')))),
-      h('dl', {},
-        h('dt', {}, t('wk.default')), h('dd', { class: 'mono', title: defaults[id] }, defaults[id]),
-        h('dt', {}, t('wk.version')), h('dd', {}, info.version || (id === 'local' && info.url ? host(info.url) : '–')),
-        h('dt', {}, t('wk.runs30')), h('dd', {}, NF.format(mine.length)),
-        h('dt', {}, t('wk.success')), h('dd', {}, mine.length ? pct(ok / mine.length) : '–'),
-        h('dt', {}, t('wk.avg')), h('dd', {}, mine.length ? dur(mine.reduce((a, r) => a + r.secs, 0) / mine.length) : '–'),
-        h('dt', {}, t('wk.total')), h('dd', {}, dur(mine.reduce((a, r) => a + (r.secs || 0), 0))),
-        h('dt', { title: t('wk.offctxTip') }, t('wk.offctx')), h('dd', {}, `${tok(outTok)}`)),
-      !info.available ? h('div', { class: 'actions' }, id === 'local' ? h('a', { class: 'btn', href: '#/settings' }, t('wk.setLocal')) : h('code', { class: 'mono note' }, info.install || '')) : null);
-  });
+  const order = w => (w.enabled && w.available ? 0 : w.available ? 1 : 2);
+  const sorted = [...ws].sort((a, b) => order(a) - order(b));
+  const stateOf = w => !w.available ? (w.kind === 'endpoint' ? t('wk.notConfigured') : t('wk.missing')) : !w.enabled ? t('wk.disabled') : t('wk.ready');
+  const dotOf = w => (w.available && w.enabled ? 'on' : 'off');
+
+  const card = w => {
+    const mine = runs.filter(r => r.worker === w.id && r.t >= since), ok = mine.filter(r => r.rc === 0).length;
+    const msgEl = h('span', { role: 'status' });
+    const dl = 'dl-w-' + w.id;
+    const modelIn = h('input', { type: 'text', value: w.model, placeholder: w.defaultModel || t('wk.auto'), list: dl, autocomplete: 'off', spellcheck: 'false', 'aria-label': t('st.model') });
+    const goodIn = h('input', { type: 'text', value: w.goodAt, 'aria-label': t('wk.goodAt') });
+    const say = (ok2, text) => { msgEl.className = ok2 ? 'msg-ok' : 'msg-err'; msgEl.textContent = text; };
+    const loadModels = async () => {
+      msgEl.className = 'note'; msgEl.textContent = t('st.testing');
+      const r = await api('/api/workers/models?id=' + encodeURIComponent(w.id));
+      $('#' + dl)?.replaceChildren(...(r.models || []).map(v => h('option', { value: v })));
+      if (r.ok) say(true, t('st.modelsLoaded', { n: r.models.length })); else say(false, t('st.test.' + (r.code || 'http_error'), { status: r.status, message: r.message || '', ms: r.ms }));
+    };
+    const save = async extra => { const r = await post('/api/workers/save', { id: w.id, model: modelIn.value, goodAt: goodIn.value, ...extra }); say(r.ok, r.ok ? t('common.saved') : fmtErrors(r.errors)); return r; };
+    const epFields = w.kind === 'endpoint' ? endpointForm(w, () => route()) : null;
+    return h('section', { class: 'card wcard' + (w.enabled && w.available ? '' : ' dim') },
+      h('div', { class: 'top' },
+        h('div', { class: 'av', style: `background:${(WK[w.id] || {}).color || 'var(--sx)'}`, 'aria-hidden': 'true' }, w.label[0]),
+        h('div', { class: 'grow' }, h('b', {}, w.label, ' ', h('span', { class: 'pill tiny' }, t('wk.kind.' + w.kind))), h('div', { class: 'note' }, w.via, w.version ? ` · ${w.version}` : '')),
+        h('span', { class: 'pill st' }, h('span', { class: 'dot ' + dotOf(w) }), stateOf(w)),
+        h('label', { class: 'switch', title: t('wk.enabled') }, h('input', { type: 'checkbox', checked: w.enabled, 'aria-label': t('wk.enabled'), onchange: async e => { const r = await save({ enabled: e.target.checked }); if (r.ok) route(); } }), h('span', {}))),
+      h('datalist', { id: dl }),
+      h('div', { class: 'form compact' },
+        h('label', {}, t('st.model')), h('div', { class: 'row' }, modelIn, w.listsModels ? h('button', { type: 'button', class: 'btn', onclick: loadModels }, t('st.loadModels')) : null),
+        h('label', {}, t('wk.goodAt')), goodIn),
+      epFields,
+      w.notes ? h('div', { class: 'note' }, w.notes) : null,
+      !w.available && w.install ? h('div', { class: 'note' }, t('wk.install') + ': ', h('code', { class: 'mono' }, w.install)) : null,
+      h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => save({}) }, t('common.save')), msgEl,
+        h('span', { class: 'note grow-r' }, mine.length ? `${NF.format(mine.length)} ${t('col.runs').toLowerCase()} · ${pct(ok / mine.length)} · ${dur(mine.reduce((a, r) => a + (r.secs || 0), 0) / mine.length)}` : t('wk.noRuns'))));
+  };
+
   const byModel = {};
   for (const r of runs.filter(r => r.t >= since)) { const k = r.worker + '|' + r.model; const o = byModel[k] || (byModel[k] = { worker: r.worker, model: r.model, runs: 0, ok: 0, secs: 0 }); o.runs++; o.ok += r.rc === 0 ? 1 : 0; o.secs += r.secs || 0; }
   main.replaceChildren(h('div', {},
     pageHead(t('wk.title'), t('wk.sub')),
-    h('div', { class: 'grid g4' }, cards),
-    h('div', { class: 'grid mt' }, card(t('wk.daily'), t('wk.dailySub'), h('div', { class: 'chart', id: 'cRuns' }))),
-    h('div', { class: 'grid mt' }, card(t('wk.modelUse'), t('common.days', { n: 30 }), table([
+    h('div', { class: 'grid g2' }, sorted.map(card), h('section', { class: 'card wcard add' }, h('h2', {}, t('ep.add'), h('small', {}, t('ep.addSub'))), endpointForm(null, () => route()))),
+    h('div', { class: 'grid mt' }, card2(t('wk.daily'), t('wk.dailySub'), h('div', { class: 'chart', id: 'cRuns' }))),
+    h('div', { class: 'grid mt' }, card2(t('wk.modelUse'), t('common.days', { n: 30 }), table([
       { key: 'worker', label: t('col.worker'), fmt: v => wpill(v) }, { key: 'model', label: t('col.model'), fmt: v => h('span', { class: 'mono' }, v || '–') },
       { key: 'runs', label: t('col.runs'), num: true }, { key: 'ok', label: t('col.success'), num: true, sortv: r => r.ok / r.runs, fmt: (_, r) => pct(r.ok / r.runs) },
       { key: 'secs', label: t('col.avg'), num: true, sortv: r => r.secs / r.runs, fmt: (_, r) => dur(r.secs / r.runs) },
@@ -362,8 +382,54 @@ async function pageWorkers() {
   runsChart($('#cRuns'), runs, 30);
 }
 
+// Endpoint editor: existing endpoint (w) or a new one (w = null).
+function endpointForm(w, done) {
+  const isNew = !w;
+  const msgEl = h('span', { role: 'status' }), testEl = h('div', { class: 'note', role: 'status' });
+  const f = {
+    id: h('input', { type: 'text', value: w ? w.id : '', placeholder: 'ollama', autocomplete: 'off', spellcheck: 'false', disabled: !isNew, 'aria-label': 'ID' }),
+    label: h('input', { type: 'text', value: w ? w.label : '', placeholder: 'Ollama', autocomplete: 'off', 'aria-label': t('ep.label') }),
+    url: h('input', { type: 'url', value: w ? w.url || '' : '', placeholder: 'http://localhost:11434', 'aria-label': t('st.url') }),
+    apiKey: h('input', { type: 'password', placeholder: w && w.has_apiKey ? t('st.secretSaved') : t('st.secretEmpty'), autocomplete: 'off', 'aria-label': t('st.apiKey') }),
+    cfId: h('input', { type: 'password', placeholder: w && w.has_cfId ? t('st.secretSaved') : t('st.secretEmpty'), autocomplete: 'off', 'aria-label': t('st.cfId') }),
+    cfSecret: h('input', { type: 'password', placeholder: w && w.has_cfSecret ? t('st.secretSaved') : t('st.secretEmpty'), autocomplete: 'off', 'aria-label': t('st.cfSecret') }),
+    model: isNew ? h('input', { type: 'text', placeholder: t('wk.auto'), autocomplete: 'off', spellcheck: 'false', 'aria-label': t('st.model') }) : null,
+  };
+  const body = () => ({ id: f.id.value.trim(), label: f.label.value.trim(), url: f.url.value.trim(), apiKey: f.apiKey.value, cfId: f.cfId.value, cfSecret: f.cfSecret.value,
+    model: isNew ? f.model.value.trim() : (w.model || ''), goodAt: isNew ? '' : (w.goodAt || '') });
+  const say = (ok, text) => { msgEl.className = ok ? 'msg-ok' : 'msg-err'; msgEl.textContent = text; };
+  const showTest = r => { testEl.className = r.ok ? 'msg-ok' : 'msg-err'; testEl.textContent = t('st.test.' + (r.code || (r.ok ? 'ok' : 'http_error')), { ms: r.ms, n: (r.models || []).length, status: r.status, message: r.message || '' }); };
+  const save = async () => { const r = await post('/api/endpoints/save', body()); say(r.ok, r.ok ? t('common.saved') : fmtErrors(r.errors)); if (r.ok) setTimeout(done, 500); return r; };
+  return h('div', { class: 'epform' },
+    h('div', { class: 'form compact' },
+      isNew ? [h('label', {}, 'ID'), f.id] : null,
+      h('label', {}, t('ep.label')), f.label,
+      h('label', {}, t('st.url')), f.url,
+      h('label', {}, t('st.apiKey')), f.apiKey,
+      h('label', {}, t('st.cfId')), f.cfId,
+      h('label', {}, t('st.cfSecret')), f.cfSecret,
+      isNew ? [h('label', {}, t('st.model')), f.model] : null),
+    h('div', { class: 'note' }, t('st.secretHint')),
+    h('div', { class: 'actions' },
+      h('button', { class: isNew ? 'btn primary' : 'btn', onclick: save }, isNew ? t('ep.addBtn') : t('ep.saveEp')),
+      !isNew ? h('button', { class: 'btn', onclick: async () => { testEl.className = 'note'; testEl.textContent = t('st.testing'); showTest(await post('/api/endpoints/test', { id: w.id })); } }, t('st.test')) : null,
+      !isNew ? h('button', { class: 'btn danger', onclick: async () => { if (confirmDelete(w.id)) { await post('/api/endpoints/delete', { id: w.id }); done(); } } }, t('ep.delete')) : null,
+      msgEl),
+    testEl);
+}
+// two-step delete without a browser dialog: first click arms, second click (within 4 s) confirms
+const armed = new Map();
+function confirmDelete(id) {
+  const now = Date.now();
+  if (armed.get(id) > now) { armed.delete(id); return true; }
+  armed.set(id, now + 4000);
+  const tip = h('div', { class: 'toast' }, t('ep.confirm'));
+  document.body.append(tip); setTimeout(() => tip.remove(), 4000);
+  return false;
+}
+
 async function pageTasks() {
-  const { runs } = await api('/api/runs?limit=5000');
+  const [{ runs }] = await Promise.all([api('/api/runs?limit=5000'), loadWorkers()]);
   const box = h('div', {});
   const draw = () => {
     const q = state.taskQuery.toLowerCase();
@@ -413,64 +479,49 @@ async function pageOffice() {
 }
 
 async function pageSettings() {
-  const [set, wk] = await Promise.all([api('/api/settings'), api('/api/workers')]);
-  const c = set.conductor, l = set.local;
+  const [set, hosts] = await Promise.all([api('/api/settings'), api('/api/hosts')]);
+  const c = set.conductor;
   const msg = () => h('span', { role: 'status' });
   const say = (el, ok, text) => { el.className = ok ? 'msg-ok' : 'msg-err'; el.textContent = text; };
   const save = async (body, el) => { const r = await post('/api/settings', body); say(el, r.ok, r.ok ? t('common.saved') : fmtErrors(r.errors)); return r; };
-  const fld = (name, value, ph, list, id) => h('input', { id, type: 'text', name, value, placeholder: ph, list, autocomplete: 'off', spellcheck: 'false' });
 
-  // worker models
-  const dlists = h('div', {}, ['gemini', 'cursor', 'copilot', 'local'].map(id => h('datalist', { id: 'dl-' + id })));
-  api('/api/models').then(m => { for (const id of ['gemini', 'cursor', 'copilot']) $('#dl-' + id)?.replaceChildren(...(m[id] || []).map(v => h('option', { value: v }))); }).catch(() => {});
-  const wMsg = msg();
-  const wForm = h('form', { class: 'form', onsubmit: async e => { e.preventDefault(); await save({ conductor: Object.fromEntries([...new FormData(e.target).entries()]) }, wMsg); } },
-    h('label', { for: 'g' }, t('st.gemini')), fld('CONDUCTOR_MODEL_GEMINI', c.CONDUCTOR_MODEL_GEMINI, 'claude-sonnet-5-5-medium', 'dl-gemini', 'g'),
-    h('div', { class: 'hint' }, t('st.geminiHint')),
-    h('label', { for: 'cu' }, t('st.cursor')), fld('CONDUCTOR_MODEL_CURSOR', c.CONDUCTOR_MODEL_CURSOR, 'composer-2.5', 'dl-cursor', 'cu'),
-    h('label', { for: 'co' }, t('st.copilot')), fld('CONDUCTOR_MODEL_COPILOT', c.CONDUCTOR_MODEL_COPILOT, 'auto', 'dl-copilot', 'co'),
+  // orchestrator + host integrations
+  const hMsg = msg(), hOut = h('pre', { class: 'mono out', hidden: true });
+  const orch = h('select', { id: 'orch', onchange: e => save({ conductor: { CONDUCTOR_ORCHESTRATOR: e.target.value === 'auto' ? '' : e.target.value } }, hMsg) },
+    [['auto', t('or.auto')], ['claude', 'Claude Code'], ['codex', 'Codex']].map(([v, l]) => h('option', { value: v, selected: (c.CONDUCTOR_ORCHESTRATOR || 'auto') === v ? true : null }, l)));
+  const hostRows = hosts.hosts.map(x => h('tr', {},
+    h('td', {}, h('b', {}, x.name)),
+    h('td', {}, x.cli ? '✓ ' + t('or.cli') : '✗ ' + t('or.noCli')),
+    h('td', {}, x.installed ? h('span', { class: 'ok' }, t('or.installed')) : h('span', { class: 'note' }, t('or.notInstalled'))),
+    h('td', {}, x.cli && !x.installed ? h('button', { class: 'btn primary', onclick: async e => {
+      e.target.disabled = true; hMsg.className = 'note'; hMsg.textContent = t('or.installing');
+      const r = await post('/api/hosts/install', { host: x.id }); say(hMsg, r.ok, r.ok ? t('or.done') : t('or.failed'));
+      hOut.hidden = false; hOut.textContent = r.output || ''; if (r.ok) setTimeout(route, 1500);
+    } }, t('or.install')) : null)));
+  const orchCard = card2(t('or.title'), t('or.sub'),
+    h('div', { class: 'form' }, h('label', { for: 'orch' }, t('or.label')), orch, h('div', { class: 'hint' }, t('or.hint'))),
+    h('div', { class: 'tw mt' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, t('or.host')), h('th', {}, 'CLI'), h('th', {}, 'Conductor'), h('th', {}))), h('tbody', {}, hostRows))),
+    h('div', { class: 'note mt' }, t('or.codexNote')),
+    h('div', { class: 'actions' }, hMsg), hOut);
+
+  // general
+  const gMsg = msg();
+  const gForm = h('form', { class: 'form', onsubmit: async e => { e.preventDefault(); await save({ conductor: Object.fromEntries([...new FormData(e.target).entries()]) }, gMsg); } },
     h('label', { for: 'to' }, t('st.timeout')), h('input', { id: 'to', type: 'number', name: 'CONDUCTOR_TIMEOUT', value: c.CONDUCTOR_TIMEOUT, placeholder: '900', min: 30, max: 7200 }),
     h('label', { for: 'ml' }, t('st.maxLines')), h('input', { id: 'ml', type: 'number', name: 'CONDUCTOR_MAX_LINES', value: c.CONDUCTOR_MAX_LINES, placeholder: '60', min: 10, max: 500 }),
     h('div', { class: 'hint' }, t('st.maxLinesHint')));
-
-  // local endpoint
-  const lMsg = msg(), testOut = h('div', { class: 'note', role: 'status', style: 'margin-top:8px' }), modelsOut = h('span', { class: 'note' });
-  const showTest = r => {
-    testOut.className = r.ok ? 'msg-ok' : 'msg-err';
-    testOut.textContent = t('st.test.' + (r.code || (r.ok ? 'ok' : 'http_error')), { ms: r.ms, n: (r.models || []).length, status: r.status, message: r.message || '' });
-  };
-  const loadModels = async () => {
-    modelsOut.textContent = t('st.testing');
-    const r = await api('/api/local/models');
-    $('#dl-local')?.replaceChildren(...(r.models || []).map(v => h('option', { value: v })));
-    modelsOut.textContent = r.ok ? t('st.modelsLoaded', { n: r.models.length }) : '';
-    if (!r.ok && r.code !== 'not_configured') showTest(r);
-    const lm = $('#lm');
-    if (lm && r.ok && r.models.length && !lm.value) lm.placeholder = `${t('wk.auto')}: ${r.models[0]}`;
-  };
-  const sec = (name, has, label) => [h('label', { for: name }, label), h('div', { class: 'row' },
-    h('input', { id: name, type: 'password', name, placeholder: has ? t('st.secretSaved') : t('st.secretEmpty'), autocomplete: 'off' }),
-    has ? h('button', { type: 'button', class: 'btn danger', onclick: async () => { const r = await save({ local: { [name]: null } }, lMsg); if (r.ok) route(); } }, t('st.remove')) : null)];
-  const lForm = h('form', { class: 'form', onsubmit: async e => { e.preventDefault(); const r = await save({ local: Object.fromEntries([...new FormData(e.target).entries()]) }, lMsg); if (r.ok) await loadModels(); } },
-    h('label', { for: 'lu' }, t('st.url')), h('input', { id: 'lu', type: 'url', name: 'LOCAL_URL', value: l.LOCAL_URL, placeholder: 'http://localhost:11434' }),
-    h('div', { class: 'hint' }, t('st.urlHint')),
-    sec('LOCAL_API_KEY', l.has_LOCAL_API_KEY, t('st.apiKey')),
-    sec('CF_ACCESS_CLIENT_ID', l.has_CF_ACCESS_CLIENT_ID, t('st.cfId')),
-    sec('CF_ACCESS_CLIENT_SECRET', l.has_CF_ACCESS_CLIENT_SECRET, t('st.cfSecret')),
-    h('div', { class: 'hint' }, t('st.secretHint')),
-    h('label', { for: 'lm' }, t('st.model')), h('div', { class: 'row' }, h('input', { id: 'lm', type: 'text', name: 'LOCAL_MODEL', value: l.LOCAL_MODEL, placeholder: t('wk.auto'), list: 'dl-local', autocomplete: 'off', spellcheck: 'false' }),
-      h('button', { type: 'button', class: 'btn', onclick: loadModels }, t('st.loadModels'))),
-    h('div', { class: 'hint' }, t('st.modelHint'), ' ', modelsOut));
 
   // toggles
   const oMsg = msg();
   const tg = (name, label, hint, def) => [h('label', { for: name }, label),
     h('div', {}, h('label', { class: 'switch' }, h('input', { id: name, type: 'checkbox', checked: (c[name] || def) === '1', onchange: e => save({ conductor: { [name]: e.target.checked ? '1' : '0' } }, oMsg) }), h('span', {}))),
     hint ? h('div', { class: 'hint' }, hint) : null];
+  const hideIn = h('input', { id: 'hide', type: 'text', value: c.CONDUCTOR_OFFICE_HIDE, placeholder: 'sessions,observer-sessions', onchange: e => save({ conductor: { CONDUCTOR_OFFICE_HIDE: e.target.value.trim() } }, oMsg) });
   const oForm = h('div', { class: 'form' },
     tg('CONDUCTOR_PIXEL', t('st.pixel'), t('st.pixelHint'), '1'),
     tg('CONDUCTOR_PANEL_AUTOSTART', t('st.panelAuto'), t('st.panelAutoHint'), '1'),
-    tg('CONDUCTOR_OFFICE_AUTOSTART', t('st.officeAuto'), t('st.officeAutoHint'), '0'));
+    tg('CONDUCTOR_OFFICE_AUTOSTART', t('st.officeAuto'), t('st.officeAutoHint'), '0'),
+    h('label', { for: 'hide' }, t('st.hide')), hideIn, h('div', { class: 'hint' }, t('st.hideHint')));
 
   // budget
   const bMsg = msg();
@@ -502,30 +553,23 @@ async function pageSettings() {
 
   // system
   const pathLabel = { state: t('path.state'), config: t('path.config'), projects: t('path.projects'), plugin: t('path.plugin') };
-  const sys = h('div', { class: 'tw' }, h('table', {}, h('tbody', {},
-    WK_ORDER.map(id => h('tr', {}, h('td', {}, wpill(id)), h('td', {}, wk.workers[id]?.available ? '✓' : '✗'), h('td', { class: 'mono' }, wk.workers[id]?.path || wk.workers[id]?.url || '–'), h('td', {}, wk.workers[id]?.version || ''))),
-    Object.entries(set.paths).map(([k, v]) => h('tr', {}, h('td', {}, pathLabel[k] || k), h('td', {}), h('td', { class: 'mono', colspan: 2 }, v))))));
+  const sys = h('div', { class: 'tw' }, h('table', {}, h('tbody', {}, Object.entries(set.paths).map(([k, v]) => h('tr', {}, h('td', {}, pathLabel[k] || k), h('td', { class: 'mono' }, v))))));
   const idxLine = h('span', { class: 'note' });
   api('/api/usage?days=1').then(u => { idxLine.textContent = u.indexing.running ? t('idx.running', u.indexing) : t('st.lastScan', { ago: u.indexing.lastScan ? rel(u.indexing.lastScan / 1000) : '–', n: u.indexing.total }); }).catch(() => {});
 
   main.replaceChildren(h('div', {},
     pageHead(t('st.title'), t('st.sub')),
-    dlists,
-    h('div', { class: 'grid g2' },
-      card(t('st.workers'), t('st.workersSub'), wForm, h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => wForm.requestSubmit() }, t('common.save')), wMsg)),
-      card(t('st.local'), t('st.localSub'), lForm, h('div', { class: 'actions' },
-        h('button', { class: 'btn primary', onclick: () => lForm.requestSubmit() }, t('common.save')),
-        h('button', { class: 'btn', onclick: async () => { testOut.className = 'note'; testOut.textContent = t('st.testing'); showTest(await post('/api/local/test')); } }, t('st.test')), lMsg), testOut)),
+    h('div', { class: 'grid' }, orchCard),
     h('div', { class: 'grid g2 mt' },
-      card(t('st.office'), null, oForm, h('div', { class: 'actions' }, oMsg)),
-      card(t('st.budget'), t('st.budgetSub'), bForm, h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => bForm.requestSubmit() }, t('common.save')), bMsg))),
-    h('div', { class: 'grid mt' }, card(t('st.pricing'), t('st.pricingSub'), h('div', { class: 'tw' }, pTable),
+      card2(t('st.general'), t('st.workersLink'), gForm, h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => gForm.requestSubmit() }, t('common.save')), gMsg)),
+      card2(t('st.budget'), t('st.budgetSub'), bForm, h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => bForm.requestSubmit() }, t('common.save')), bMsg))),
+    h('div', { class: 'grid mt' }, card2(t('st.office'), null, oForm, h('div', { class: 'actions' }, oMsg))),
+    h('div', { class: 'grid mt' }, card2(t('st.pricing'), t('st.pricingSub'), h('div', { class: 'tw' }, pTable),
       h('div', { class: 'actions' }, newModel, h('button', { class: 'btn primary', onclick: savePricing }, t('st.savePricing')),
         h('button', { class: 'btn', onclick: async () => { const r = await save({ pricing: {} }, pMsg); if (r.ok) setTimeout(route, 600); } }, t('st.reset')), pMsg))),
-    h('div', { class: 'grid mt' }, card(t('st.system'), t('st.version', { v: set.version }), sys, h('div', { class: 'actions' }, idxLine,
+    h('div', { class: 'grid mt' }, card2(t('st.system'), t('st.version', { v: set.version }), sys, h('div', { class: 'actions' }, idxLine,
       h('button', { class: 'btn', onclick: async () => { await post('/api/rescan'); idxLine.textContent = t('st.rescanStarted'); } }, t('st.rescan'))))),
   ));
-  if (l.LOCAL_URL) loadModels().catch(() => {});
 }
 
 // ───────────────────────── router & chrome ─────────────────────────

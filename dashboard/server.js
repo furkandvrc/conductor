@@ -2,9 +2,10 @@
 // Conductor dashboard: localhost-only, no dependencies. Nothing it reads leaves this machine.
 //  • Claude usage: incremental index over ~/.claude/projects/**/*.jsonl (lib/usage.js), priced at
 //    Anthropic API list rates (lib/pricing.js) — an API-equivalent figure, not a subscription bill.
-//  • Workers / tasks: ~/.claude/conductor/runs.jsonl, appended by `delegate` and `gen-image`.
-//  • Settings: ~/.config/conductor/{conductor.env, local.env, pricing.json} (lib/config.js).
-//  • Office: starts/stops Pixel Agents through `conductor-panel office …` and embeds it.
+//  • Workers: the registry in ../lib (built-in CLIs, custom CLIs, OpenAI-compatible endpoints).
+//  • Tasks: ~/.claude/conductor/runs.jsonl, appended by `delegate` and `gen-image`.
+//  • Settings: ~/.config/conductor/{conductor.env, workers.json, endpoints.json, pricing.json}.
+//  • Hosts: install Conductor into Claude Code / Codex. Office: Pixel Agents via `conductor-panel office`.
 'use strict';
 const http = require('http');
 const fs = require('fs');
@@ -14,18 +15,15 @@ const { execFile } = require('child_process');
 const { PRICING_DEFAULT, loadPricing } = require('./lib/pricing');
 const { UsageIndex } = require('./lib/usage');
 const cfg = require('./lib/config');
-const local = require('./lib/local');
+const { listModels } = require('./lib/local');
+const S = require('../lib/settings');
 
 const HOME = os.homedir();
-const STATE = process.env.CONDUCTOR_HOME || path.join(HOME, '.claude', 'conductor');
+const STATE = S.P.state;
 const PROJECTS = process.env.CONDUCTOR_PROJECTS_DIR || path.join(HOME, '.claude', 'projects');
-const CONF = process.env.CONDUCTOR_CONFIG_DIR || path.join(HOME, '.config', 'conductor');
-const CONF_ENV = path.join(CONF, 'conductor.env');
-const LOCAL_ENV = process.env.CONDUCTOR_LOCAL_ENV || path.join(CONF, 'local.env');
+const CONF = S.P.conf;
 const PRICING_FILE = path.join(CONF, 'pricing.json');
-const RUNS = path.join(STATE, 'runs.jsonl');
 const USAGE_TSV = path.join(STATE, 'usage.tsv');
-const LOGS = path.join(STATE, 'logs');
 const ROOT = path.resolve(__dirname, '..');
 const PANEL_BIN = path.join(ROOT, 'bin', 'conductor-panel');
 const PORT = Number(process.env.CONDUCTOR_PANEL_PORT || 4747);
@@ -37,29 +35,34 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 
 fs.mkdirSync(STATE, { recursive: true });
 fs.mkdirSync(CONF, { recursive: true });
-
 const usage = new UsageIndex({ projectsDir: PROJECTS, indexFile: path.join(STATE, 'usage-index.json'), home: HOME });
 
 // ───────────── helpers ─────────────
 const EXTRA_PATH = ['/opt/homebrew/bin', '/usr/local/bin', path.join(HOME, '.local', 'bin')].join(path.delimiter);
+const ENV = { ...process.env, PATH: `${process.env.PATH || ''}${path.delimiter}${EXTRA_PATH}` };
 function sh(cmd, args, timeout = 4000) {
-  return new Promise(res => execFile(cmd, args, { timeout, env: { ...process.env, PATH: `${process.env.PATH || ''}${path.delimiter}${EXTRA_PATH}` } },
-    (err, stdout, stderr) => res({ ok: !err, out: String(stdout || '') + String(stderr || '') })));
+  return new Promise(res => execFile(cmd, args, { timeout, env: ENV, maxBuffer: 4e6 }, (err, stdout, stderr) => res({ ok: !err, out: String(stdout || '') + String(stderr || '') })));
 }
-async function which(cmd) { const r = await sh('/bin/sh', ['-c', `command -v ${cmd}`]); return r.ok ? r.out.trim().split('\n')[0] : null; }
+function which(cmd) {
+  if (!cmd) return null;
+  for (const d of ENV.PATH.split(path.delimiter)) {
+    const p = path.join(d, cmd);
+    try { fs.accessSync(p, fs.constants.X_OK); if (fs.statSync(p).isFile()) return p; } catch {}
+  }
+  return null;
+}
 
-// ───────────── runs / workers ─────────────
+// ───────────── runs ─────────────
 function readRuns() {
   const runs = [];
   try {
-    for (const line of fs.readFileSync(RUNS, 'utf8').split('\n')) {
+    for (const line of fs.readFileSync(S.P.runs, 'utf8').split('\n')) {
       if (!line.trim()) continue;
       try { const r = JSON.parse(line); if (r && r.worker && r.t) runs.push(r); } catch {}
     }
   } catch {}
-  // runs recorded before runs.jsonl existed (usage.tsv has no task text)
   const firstT = runs.length ? Math.min(...runs.map(r => r.t)) : Infinity;
-  try {
+  try { // runs recorded before runs.jsonl existed (no task text)
     for (const line of fs.readFileSync(USAGE_TSV, 'utf8').split('\n')) {
       const [ts, worker, model, write, secs, rc] = line.split('\t');
       if (!ts || !worker) continue;
@@ -71,65 +74,96 @@ function readRuns() {
   return runs.sort((a, b) => b.t - a.t);
 }
 
-const WORKERS = {
-  gemini: { cli: 'agy', via: 'Antigravity CLI (agy)', install: 'https://antigravity.google' },
-  cursor: { cli: 'cursor-agent', via: 'Cursor Agent CLI', install: 'curl https://cursor.com/install -fsS | bash' },
-  copilot: { cli: 'copilot', via: 'GitHub Copilot CLI', install: 'npm install -g @github/copilot' },
-  local: { cli: null, via: 'OpenAI-compatible HTTP endpoint', install: null },
-};
-let workerCache = { at: 0, data: null };
-async function workerInfo(force) {
-  if (!force && workerCache.data && Date.now() - workerCache.at < 5 * 60000) return workerCache.data;
-  const out = {};
-  await Promise.all(Object.entries(WORKERS).map(async ([id, w]) => {
-    if (!w.cli) {
-      const l = cfg.readEnv(LOCAL_ENV);
-      out[id] = { ...w, available: !!l.LOCAL_URL, model: l.LOCAL_MODEL || '', url: l.LOCAL_URL || '' };
-      return;
+// ───────────── workers ─────────────
+const versionCache = new Map();
+async function cliVersion(cli) {
+  const c = versionCache.get(cli);
+  if (c && Date.now() - c.at < 10 * 60000) return c.v;
+  const r = await sh(cli, ['--version'], 6000);
+  const line = r.out.split('\n').map(s => s.trim()).find(s => /\d+\.\d+/.test(s));
+  const v = line ? line.slice(0, 60) : null;
+  versionCache.set(cli, { at: Date.now(), v });
+  return v;
+}
+async function workerInfo() {
+  const eps = S.endpoints();
+  const out = [];
+  for (const w of S.allWorkers()) {
+    const kind = w.endpoint ? 'endpoint' : w.custom ? 'custom' : 'builtin';
+    const p = w.endpoint ? null : which(w.cli);
+    const info = {
+      id: w.id, label: w.label, kind, enabled: w.enabled, model: w.model, defaultModel: w.defaultModel || '', goodAt: w.goodAt,
+      via: w.via, install: w.install || '', host: w.host || null, notes: w.notes || '', listsModels: !!(w.listModels || w.endpoint),
+      available: w.endpoint ? !!w.url : !!p, path: p, version: p ? await cliVersion(w.cli) : null,
+    };
+    if (w.endpoint) {
+      const e = eps.find(x => x.id === w.id) || {};
+      Object.assign(info, { url: e.url, has_apiKey: !!e.apiKey, has_cfId: !!e.cfId, has_cfSecret: !!e.cfSecret });
     }
-    const p = await which(w.cli);
-    let version = null;
-    if (p) {
-      const v = await sh(w.cli, ['--version'], 6000);
-      const line = v.out.split('\n').map(s => s.trim()).find(s => /\d+\.\d+/.test(s));
-      version = line ? line.slice(0, 60) : null;
-    }
-    out[id] = { ...w, available: !!p, path: p, version };
-  }));
-  workerCache = { at: Date.now(), data: out };
+    out.push(info);
+  }
   return out;
 }
-
-let modelsCache = { at: 0, data: null };
-async function modelLists() {
-  if (modelsCache.data && Date.now() - modelsCache.at < 60 * 60000) return modelsCache.data;
-  const parse = (txt, re) => [...new Set(txt.split('\n').map(l => (l.match(re) || [])[1]).filter(Boolean))];
-  const [g, c] = await Promise.all([sh('agy', ['models'], 15000), sh('cursor-agent', ['--list-models'], 15000)]);
-  const data = {
-    gemini: g.ok ? parse(g.out, /^([a-z0-9][\w.-]+)\s/i) : [],
-    cursor: c.ok ? parse(c.out, /^([a-z0-9][\w.-]+)\s+-\s/i) : [],
-    copilot: ['auto'],
-  };
-  modelsCache = { at: Date.now(), data };
+const modelsCache = new Map();
+async function workerModels(id) {
+  const w = S.findWorker(id);
+  if (!w) return { ok: false, code: 'unknown', models: [] };
+  if (w.endpoint) return listModels(S.endpoints().find(e => e.id === w.id));
+  const c = modelsCache.get(id);
+  if (c && Date.now() - c.at < 30 * 60000) return c.data;
+  let data = { ok: true, models: w.model ? [w.model] : [] };
+  if (w.listModels && which(w.cli)) {
+    const r = await sh(w.cli, w.listModels.args, 20000);
+    const ids = [...new Set(r.out.split('\n').map(l => (l.match(w.listModels.re) || [])[1]).filter(Boolean))];
+    data = { ok: r.ok, models: ids, code: r.ok ? 'ok' : 'http_error', message: r.ok ? '' : r.out.slice(0, 160) };
+  }
+  modelsCache.set(id, { at: Date.now(), data });
   return data;
 }
 
-// ───────────── setup checklist (what a new install is missing) ─────────────
+// ───────────── hosts (orchestrators) ─────────────
+async function hostStatus() {
+  const claudeCli = which('claude'), codexCli = which('codex');
+  let claudePlugin = false, codexPlugin = false;
+  try { claudePlugin = /conductor@/.test(fs.readFileSync(path.join(HOME, '.claude', 'plugins', 'installed_plugins.json'), 'utf8')); } catch {}
+  if (!claudePlugin) { try { claudePlugin = /"conductor@[^"]+":\s*true/.test(fs.readFileSync(path.join(HOME, '.claude', 'settings.json'), 'utf8')); } catch {} }
+  try { codexPlugin = /plugins\."conductor@/.test(fs.readFileSync(path.join(process.env.CODEX_HOME || path.join(HOME, '.codex'), 'config.toml'), 'utf8')); } catch {}
+  const env = S.general();
+  return {
+    orchestrator: env.CONDUCTOR_ORCHESTRATOR || 'auto',
+    hosts: [
+      { id: 'claude', name: 'Claude Code', cli: !!claudeCli, installed: claudePlugin, worker: 'claude' },
+      { id: 'codex', name: 'Codex', cli: !!codexCli, installed: codexPlugin, worker: 'codex' },
+    ],
+    root: ROOT,
+  };
+}
+async function installHost(host) {
+  if (host === 'claude') {
+    const a = await sh('claude', ['plugin', 'marketplace', 'add', ROOT], 60000);
+    const b = await sh('claude', ['plugin', 'install', 'conductor@conductor'], 60000);
+    return { ok: b.ok, output: (a.out + b.out).trim().slice(-800) };
+  }
+  if (host === 'codex') {
+    const a = await sh('codex', ['plugin', 'marketplace', 'add', ROOT], 60000);
+    const b = await sh('codex', ['plugin', 'add', 'conductor@conductor'], 60000);
+    return { ok: b.ok, output: (a.out + b.out).trim().slice(-800) };
+  }
+  return { ok: false, output: 'unknown host' };
+}
+
+// ───────────── setup checklist ─────────────
 async function setupStatus() {
-  const w = await workerInfo();
-  const [py, curl, pa] = await Promise.all([which('python3'), which('curl'), which('pixel-agents')]);
+  const ws = await workerInfo();
   let hooks = false;
   try { hooks = fs.readFileSync(path.join(HOME, '.claude', 'settings.json'), 'utf8').includes('pixel-agents'); } catch {}
   const items = [
-    { id: 'python3', ok: !!py, required: true },
-    { id: 'curl', ok: !!curl, required: true },
+    { id: 'python3', ok: !!which('python3'), required: true },
+    { id: 'curl', ok: !!which('curl'), required: true },
     { id: 'transcripts', ok: fs.existsSync(PROJECTS), required: true },
-    { id: 'worker_any', ok: Object.values(w).some(x => x.available), required: true },
-    { id: 'gemini', ok: w.gemini.available, hint: w.gemini.install },
-    { id: 'cursor', ok: w.cursor.available, hint: w.cursor.install },
-    { id: 'copilot', ok: w.copilot.available, hint: w.copilot.install },
-    { id: 'local', ok: w.local.available },
-    { id: 'pixel_agents', ok: !!pa, hint: 'npm install -g pixel-agents' },
+    { id: 'worker_any', ok: ws.some(w => w.enabled && w.available), required: true },
+    { id: 'endpoint_any', ok: ws.some(w => w.kind === 'endpoint') },
+    { id: 'pixel_agents', ok: !!which('pixel-agents'), hint: 'npm install -g pixel-agents' },
     { id: 'pixel_hooks', ok: hooks },
   ];
   return { items, complete: items.filter(i => i.required).every(i => i.ok) };
@@ -137,12 +171,11 @@ async function setupStatus() {
 
 // ───────────── settings ─────────────
 function getSettings() {
-  const c = cfg.readEnv(CONF_ENV);
+  const c = cfg.readEnv(S.P.env);
   let over = {};
   try { over = JSON.parse(fs.readFileSync(PRICING_FILE, 'utf8')) || {}; } catch {}
   return {
     conductor: Object.fromEntries(Object.keys(cfg.CONDUCTOR_KEYS).map(k => [k, c[k] ?? ''])),
-    local: cfg.publicLocal(LOCAL_ENV),
     pricing: { defaults: PRICING_DEFAULT, overrides: over },
     paths: { state: STATE, config: CONF, projects: PROJECTS, plugin: ROOT },
     version: VERSION,
@@ -150,8 +183,7 @@ function getSettings() {
 }
 function saveSettings(body) {
   let errors = [];
-  if (body.conductor) errors = errors.concat(cfg.applyConductor(CONF_ENV, body.conductor));
-  if (body.local && !errors.length) { errors = errors.concat(cfg.applyLocal(LOCAL_ENV, body.local)); workerCache.at = 0; }
+  if (body.conductor) errors = errors.concat(cfg.applyConductor(S.P.env, body.conductor));
   if (body.pricing && !errors.length) errors = errors.concat(cfg.applyPricing(PRICING_FILE, body.pricing));
   return errors;
 }
@@ -165,7 +197,7 @@ async function officeStatus() {
   let hooks = false;
   try { hooks = fs.readFileSync(path.join(HOME, '.claude', 'settings.json'), 'utf8').includes('pixel-agents'); } catch {}
   return {
-    running, installed: !!(await which('pixel-agents')), port: OFFICE_PORT, url: `http://127.0.0.1:${OFFICE_PORT}/`,
+    running, installed: !!which('pixel-agents'), port: OFFICE_PORT, url: `http://127.0.0.1:${OFFICE_PORT}/`,
     approveUrl: token ? `http://127.0.0.1:${OFFICE_PORT}/?token=${token}` : null, hooksInstalled: hooks,
   };
 }
@@ -184,6 +216,22 @@ function readBody(req) {
   });
 }
 
+const POST = {
+  '/api/settings': async b => { const errors = saveSettings(b); return [errors.length ? 400 : 200, { ok: !errors.length, errors, settings: getSettings() }]; },
+  '/api/workers/save': async b => {
+    if (!S.findWorker(b.id)) return [400, { ok: false, errors: [{ field: 'id', code: 'unknown_field' }] }];
+    const errors = S.saveWorker(S.findWorker(b.id).id, { enabled: b.enabled, model: b.model, goodAt: b.goodAt });
+    return [errors.length ? 400 : 200, { ok: !errors.length, errors }];
+  },
+  '/api/endpoints/save': async b => { const errors = S.saveEndpoint(b); return [errors.length ? 400 : 200, { ok: !errors.length, errors }]; },
+  '/api/endpoints/delete': async b => { S.deleteEndpoint(String(b.id || '')); return [200, { ok: true }]; },
+  '/api/endpoints/test': async b => [200, await listModels(S.endpoints().find(e => e.id === b.id))],
+  '/api/hosts/install': async b => [200, await installHost(String(b.host || ''))],
+  '/api/office/start': async () => { const r = await sh(PANEL_BIN, ['office', 'start'], 30000); return [200, { ...(await officeStatus()), output: r.out.trim() }]; },
+  '/api/office/stop': async () => { const r = await sh(PANEL_BIN, ['office', 'stop'], 30000); return [200, { ...(await officeStatus()), output: r.out.trim() }]; },
+  '/api/rescan': async () => { usage.scan(); versionCache.clear(); modelsCache.clear(); return [200, { ok: true }]; },
+};
+
 const server = http.createServer(async (req, res) => {
   // DNS-rebinding guard: only requests addressed to this machine by name.
   const host = (req.headers.host || '').toLowerCase();
@@ -195,15 +243,9 @@ const server = http.createServer(async (req, res) => {
       // CSRF guard: same-origin fetch with a custom header (cross-site requests can't add it without CORS).
       const origin = req.headers.origin;
       if (req.headers['x-conductor'] !== '1' || (origin && origin !== `http://${host}`)) return json(res, 403, { error: 'forbidden' });
-      const body = await readBody(req);
-      if (p === '/api/settings') { const errors = saveSettings(body); return json(res, errors.length ? 400 : 200, { ok: !errors.length, errors, settings: getSettings() }); }
-      if (p === '/api/local/test') return json(res, 200, await local.listModels(LOCAL_ENV));
-      if (p === '/api/office/start' || p === '/api/office/stop') {
-        const r = await sh(PANEL_BIN, ['office', p.endsWith('start') ? 'start' : 'stop'], 30000);
-        return json(res, 200, { ...(await officeStatus()), output: r.out.trim() });
-      }
-      if (p === '/api/rescan') { usage.scan(); workerCache.at = 0; modelsCache.at = 0; return json(res, 200, { ok: true }); }
-      return json(res, 404, { error: 'not found' });
+      if (!POST[p]) return json(res, 404, { error: 'not found' });
+      const [code, body] = await POST[p](await readBody(req));
+      return json(res, code, body);
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
     if (STATIC[p]) {
@@ -222,16 +264,16 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { runs: runs.slice(0, Math.min(20000, Number(url.searchParams.get('limit') || 2000))), total: runs.length });
     }
     if (p === '/api/workers') return json(res, 200, { workers: await workerInfo() });
-    if (p === '/api/models') return json(res, 200, await modelLists());
-    if (p === '/api/local/models') return json(res, 200, await local.listModels(LOCAL_ENV));
+    if (p === '/api/workers/models') return json(res, 200, await workerModels(url.searchParams.get('id') || ''));
+    if (p === '/api/hosts') return json(res, 200, await hostStatus());
     if (p === '/api/settings') return json(res, 200, getSettings());
     if (p === '/api/setup') return json(res, 200, await setupStatus());
     if (p === '/api/office') return json(res, 200, await officeStatus());
     if (p === '/api/log') {
       const name = url.searchParams.get('name') || '';
       if (!/^[\w.-]+\.log$/.test(name)) return json(res, 400, { error: 'bad name' });
-      const file = path.join(LOGS, name);
-      if (path.dirname(file) !== LOGS || !fs.existsSync(file)) return json(res, 404, { error: 'not found' });
+      const file = path.join(S.P.logs, name);
+      if (path.dirname(file) !== S.P.logs || !fs.existsSync(file)) return json(res, 404, { error: 'not found' });
       const st = fs.statSync(file), max = 400 * 1024, len = Math.min(st.size, max);
       const fd = fs.openSync(file, 'r'); const buf = Buffer.alloc(len); fs.readSync(fd, buf, 0, len, st.size - len); fs.closeSync(fd);
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });

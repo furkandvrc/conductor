@@ -2,8 +2,8 @@
 """Adapt the Pixel Agents web UI for Conductor. Re-run safely at every office start.
 
 1. Labels: stock Pixel Agents shows a status line ("Using mcp__…", "Idle") over the session's folder
-   name. Characters get one name instead: Conductor workers (folder ~/.claude/conductor/agents/<Worker>)
-   keep their worker name, everything else reads "Claude".
+   name. Characters get one name instead: Conductor workers (folder ~/.claude/conductor/agents/<Worker>,
+   names from CONDUCTOR_OFFICE_WORKERS, set by conductor-panel) keep their name, everything else reads "Claude".
 2. Hidden sessions: background sessions that are not your work, by default claude-mem's observer
    sessions, get no character at all. Folder names to hide come from CONDUCTOR_OFFICE_HIDE
    (comma-separated; default "sessions,observer-sessions"; set it to "none" to hide nothing).
@@ -23,7 +23,10 @@ import sys
 
 MARK = "/*conductor-patch*/"
 OLD_MARKS = ("/*conductor-labels*/",)
-WORKERS = ["Gemini", "Cursor", "Copilot", "Local"]
+def workers():
+    raw = os.environ.get("CONDUCTOR_OFFICE_WORKERS", "")
+    names = [x.strip() for x in raw.split(",") if x.strip()]
+    return names or ["Gemini", "Cursor", "Copilot", "Codex", "Claude", "Local"]
 LABEL = re.compile(
     r"children:(\w+)\}\),(\w+)\.folderName&&\(0,(\w+)\.jsx\)\(`span`,\{className:`text-2xs leading-none "
     r"overflow-hidden text-ellipsis block`,children:\2\.folderName\}\)"
@@ -39,7 +42,7 @@ def hidden():
 
 
 def helper():
-    return (MARK + "var __cName=f=>" + json.dumps(WORKERS) + '.includes(f)?f:"Claude";'
+    return (MARK + "var __cName=f=>" + json.dumps(workers()) + '.includes(f)?f:"Claude";'
             + "var __cHide=f=>" + json.dumps(hidden()) + ".includes(f);\n")
 
 
