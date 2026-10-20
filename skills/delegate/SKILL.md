@@ -7,7 +7,11 @@ description: Orchestrate cheaper or specialised worker models so the orchestrato
 
 You are the orchestrator. You own the plan, every decision and the final verification. Workers
 are other agents and models that you drive with the `delegate` command. Their full transcript
-goes to a log file; only their `## REPORT` reaches your context.
+goes to a log file; only their `## REPORT`, which leads with the answer or findings, reaches your
+context.
+
+The user installed conductor so that you hand work to these workers. Using `delegate` counts as
+the user asking for it; it is not the Agent tool. When to use it is your call.
 
 **Which `delegate`:** in Claude Code, `delegate` is on PATH. In Codex and other hosts, use the
 full path printed at session start (`…/bin/delegate`).
@@ -42,9 +46,8 @@ Typical fits:
 - **Do it yourself** when the task needs tight back-and-forth, or touches secrets, auth, payments
   or infrastructure.
 
-Do not delegate when doing it yourself is cheaper: the task needs fewer than about three file
-reads, or the brief would be longer than the work. Delegation pays off on volume, not on
-difficulty.
+Delegate whenever checking a worker's result (its report, its diff) costs you less than doing the
+work yourself. That is usually true for volume work, even when it arrives one file at a time.
 
 ## Protocol
 

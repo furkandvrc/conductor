@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.1
+
+### Changed
+
+- **The orchestrator now actually delegates.** Usage data showed the session-start note and the
+  skill lost to the host's "handle it inline" default. The note and the `delegate` skill now say
+  that using `delegate` counts as the user asking (it is not the Agent tool), and leave the
+  decision to the orchestrator: delegate whenever checking the result costs less than doing the
+  work. The "fewer than three file reads" rule is gone.
+- **Worker reports lead with the answer.** The contract asks for the result first (findings with
+  file:line references), then files changed and open questions, in up to 300 words.
+
+### Fixed
+
+- A worker's answer was lost when its output passed the line cap: only the `## REPORT` section was
+  shown, and that section held no answer. A `## REPORT` longer than the cap now keeps its head
+  instead of the output's tail.
+- Codex host detection through `PLUGIN_ROOT`, Codex model listing, local-time run ids, a single
+  copy of a migrated secret, and parallel version probes.
+- Office: alert statuses stay on labels, workers sit in a "Workers" area, labels sit above speech
+  bubbles, the Pixel Agents request body limit is 16 MB, and the patch no longer writes to a stray
+  file.
+
 ## 0.3.0
 
 ### Added

@@ -1,7 +1,7 @@
 {
   "name": "conductor",
   "displayName": "Conductor",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "One agent orchestrates, others do the volume work: Claude Code, Codex, Antigravity/Gemini, Cursor, Copilot, OpenCode, Qwen, custom CLIs and any OpenAI-compatible endpoint. Local dashboard for usage, cost, tasks, workers and settings.",
   "author": {
     "name": "Furkan Divarcı",

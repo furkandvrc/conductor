@@ -1,6 +1,6 @@
 {
   "name": "conductor",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Orchestrate cheaper worker models (Claude Code, Antigravity/Gemini, Cursor, GitHub Copilot, OpenCode, Qwen, any OpenAI-compatible endpoint) from Codex, with a local dashboard for usage, tasks and settings.",
   "author": {
     "name": "Furkan Divarcı",

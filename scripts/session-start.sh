@@ -33,7 +33,7 @@ if [ -z "$workers" ]; then
   echo "conductor: no worker models are set up yet. If the user wants to delegate work to cheaper models, suggest the conductor setup skill. Dashboard: $dash"
   exit 0
 fi
-echo "conductor: you are the orchestrator. Hand volume work (reading many files, mechanical edits, large-diff reviews, commit messages) to these workers with \`$dcmd <worker> \"<task>\"\` and keep planning, decisions and verification yourself; follow the conductor delegate skill. Available workers:"
+echo "conductor: you are the orchestrator. The user installed conductor so you hand work to other models: using \`$dcmd <worker> \"<task>\"\` counts as the user asking (it is not the Agent tool). Delegate whenever checking the result costs less than doing the work (reading many files, translation, reviews, mechanical edits, commit messages); keep planning, decisions and verification yourself; see the conductor delegate skill. Available workers:"
 echo "$workers"
 command -v agy >/dev/null 2>&1 && echo "Images: \`$here/bin/gen-image \"<prompt>\" <out.png>\` (conductor image skill)."
 echo "Dashboard (usage, cost, tasks, settings, office): $dash"

@@ -95,6 +95,9 @@ test('delegate: report keeps the REPORT section when output is long', () => {
   const out = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n') + '\n## REPORT\ndid things';
   const r = D.report(out, 20);
   assert.ok(r.text.startsWith('## REPORT')); assert.match(r.note, /REPORT/);
+  const long = 'preamble\n## REPORT\nanswer first\n' + Array.from({ length: 50 }, (_, i) => `detail ${i}`).join('\n');
+  const lr = D.report(long, 20);
+  assert.ok(lr.text.startsWith('## REPORT\nanswer first')); assert.equal(lr.text.split('\n').length, 20);
   assert.equal(D.report('short', 20).note, '');
   assert.equal(D.reportSection('blah\n## REPORT\n done '), 'done');
 });
