@@ -43,7 +43,7 @@ const usage = new UsageIndex({ projectsDir: PROJECTS, indexFile: path.join(STATE
 const EXTRA_PATH = ['/opt/homebrew/bin', '/usr/local/bin', path.join(HOME, '.local', 'bin')].join(path.delimiter);
 const ENV = { ...process.env, PATH: `${process.env.PATH || ''}${path.delimiter}${EXTRA_PATH}` };
 function sh(cmd, args, timeout = 4000) {
-  return new Promise(res => execFile(cmd, args, { timeout, env: ENV, maxBuffer: 4e6 }, (err, stdout, stderr) => res({ ok: !err, out: String(stdout || '') + String(stderr || '') })));
+  return new Promise(res => execFile(cmd, args, { timeout, env: ENV, maxBuffer: 4e6 }, (err, stdout, stderr) => res({ ok: !err, stdout: String(stdout || ''), out: String(stdout || '') + String(stderr || '') })));
 }
 function which(cmd) {
   if (!cmd) return null;
@@ -136,8 +136,10 @@ async function workerModels(id) {
   let data = { ok: true, models: w.model ? [w.model] : [] };
   if (w.listModels && which(w.cli)) {
     const r = await sh(w.cli, w.listModels.args, 20000);
-    const ids = w.listModels.parse ? w.listModels.parse(r.out) : [...new Set(r.out.split('\n').map(l => (l.match(w.listModels.re) || [])[1]).filter(Boolean))];
-    data = { ok: r.ok, models: ids, code: r.ok ? 'ok' : 'http_error', message: r.ok ? '' : r.out.slice(0, 160) };
+    const ids = w.listModels.parse ? w.listModels.parse(r.stdout) : [...new Set(r.stdout.split('\n').map(l => (l.match(w.listModels.re) || [])[1]).filter(Boolean))];
+    // No ids parsed usually means the CLI is not signed in or could not reach its service: say so.
+    const ok = r.ok && ids.length > 0;
+    data = { ok, models: ids, code: ok ? 'ok' : (r.ok ? 'no_models' : 'http_error'), message: ok ? '' : (r.out.trim().slice(-300) || 'no output') };
   }
   modelsCache.set(id, { at: Date.now(), data });
   return data;

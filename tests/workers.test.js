@@ -161,3 +161,20 @@ test('nudge hook: reminds after N inline reads, resets on delegate, silent when 
   fs.writeFileSync(conf, "CONDUCTOR_DELEGATION='off'\n");
   for (let i = 0; i < 10; i++) assert.equal(hook(read), '');
 });
+
+test('agy models: the "Fetching…" banner and error lines are not models', () => {
+  const g = R.ADAPTERS.find(a => a.id === 'gemini');
+  const out = 'Fetching available models...\ngemini-4-argon-medium\tGemini 4 Argon (Medium)\nclaude-sonnet-5-5-low\tClaude Sonnet 5.5 (Low)\ngpt-oss-120b-medium\tGPT-OSS 120B (Medium)\nNot signed in. Run agy to sign in\nError: request failed\n';
+  const ids = out.split('\n').map(l => (l.match(g.listModels.re) || [])[1]).filter(Boolean);
+  assert.deepStrictEqual(ids, ['gemini-4-argon-medium', 'claude-sonnet-5-5-low', 'gpt-oss-120b-medium']);
+  assert.deepStrictEqual('Fetching available models...\nError: not logged in\n'.split('\n').map(l => (l.match(g.listModels.re) || [])[1]).filter(Boolean), []);
+});
+
+test('cursor, codex and opencode model listings ignore banners, warnings and errors', () => {
+  const ad = id => R.ADAPTERS.find(a => a.id === id).listModels;
+  const viaRe = (id, out) => out.split('\n').map(l => (l.match(ad(id).re) || [])[1]).filter(Boolean);
+  assert.deepStrictEqual(viaRe('cursor', 'Available models\n\nauto - Auto (default)\ngpt-5.3-codex - Codex 5.3\nError: not logged in\nTip - run cursor-agent login\n'), ['auto', 'gpt-5.3-codex']);
+  assert.deepStrictEqual(ad('codex').parse('WARN something\n{"models":[{"slug":"a","visibility":"list"},{"slug":"b","visibility":"hide"}]}\n'), ['a']);
+  assert.deepStrictEqual(ad('codex').parse('Error: not signed in'), []);
+  assert.deepStrictEqual(viaRe('opencode', 'opencode/big-pickle\nanthropic/claude-sonnet-5-5\nNo providers configured\n'), ['opencode/big-pickle', 'anthropic/claude-sonnet-5-5']);
+});

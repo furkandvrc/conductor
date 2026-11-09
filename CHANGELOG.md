@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.1
+
+### Fixed
+
+- **Worker model lists counted banner and error lines as models.** `agy models` prints
+  "Fetching available models..." first, which showed up as a model, so an Antigravity CLI that
+  was not signed in (or could not reach its service) reported "1 model". Model ids are now
+  matched strictly for Antigravity and Cursor, Codex's JSON is parsed from stdout only and
+  survives warning lines, and an empty list is reported as an error with the CLI's own output
+  (dashboard and `delegate models`) instead of a silent count.
+- OpenCode now lists its models (`opencode models`) in the dashboard.
+
 ## 0.6.0
 
 ### Added
