@@ -32,8 +32,15 @@ Cursor and the others, and Codex sees Claude Code and the others.
 2. The `conductor:delegate` skill gives Claude the routing table and a protocol: brief the worker
    like a contractor, run it, **verify its work**, escalate when it fails.
 3. Claude runs `delegate <worker> "<task>"`. The worker's full transcript goes to a log file;
-   only a short `## REPORT` enters Claude's context, which is where the token savings come from.
-4. Workers are **read-only** by default. With `--write` they may edit files, but they can never
+   only a short `## REPORT` enters Claude's context (`STATUS / ANSWER / CHANGED / UNSURE`, under
+   120 words by default), which is where the token savings come from.
+4. A `PostToolUse` hook keeps it at that: after several inline file reads since the last
+   `delegate` call it reminds Claude, in one line, to hand the next chunk to a worker. How hard
+   Claude is pushed (Off, Light, Balanced, Max) is a dashboard setting.
+5. A worker can have a **model pool**: e.g. Antigravity with Sonnet 60%, Opus 30%, Gemini 10%.
+   Switch models on and off and set their shares on the dashboard's Workers page; `delegate`
+   spreads runs in those ratios unless Claude passes `--model`.
+6. Workers are **read-only** by default. With `--write` they may edit files, but they can never
    commit or push.
 
 ```bash
@@ -51,10 +58,10 @@ machine. The interface is in English and Turkish.
 
 | Page | What you get |
 |---|---|
-| **Overview** | today, this month and the last 30 days of Claude cost, cache hit rate, daily cost by model, projects, delegated work, setup checklist |
+| **Overview** | what is running now, a timeline of every worker's tasks, today, this month and the last 30 days of Claude cost, cache hit rate, daily cost by model, projects, setup checklist |
 | **Claude usage** | 7 days to all time, per-project filter, daily cost and token charts, model, project and session tables |
 | **Workers** | turn each worker on or off; set its model (loaded from the CLI or the endpoint) and role; add, edit, test and delete endpoints; per-worker stats |
-| **Tasks** | every delegated task, searchable; open one to see the brief, the report and the full log |
+| **Tasks** | running tasks with a live timer, then delegated tasks by time range (last 7 days first), searchable; open one to see the brief, the report and the full log |
 | **Office** | [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) embedded: your sessions and workers as pixel characters (optional) |
 | **Settings** | orchestrator (automatic, Claude Code or Codex) and one-click installation into each host; timeout; budgets; prices; office switches |
 
@@ -142,9 +149,30 @@ the flag before it are dropped.
 | `gen-image "<prompt>" out.png [--transparent] [--variants N]` | generate an image into the project via Antigravity |
 | `conductor-panel [open\|start\|stop\|restart\|status]` | control the dashboard |
 | `conductor-panel office [start\|stop\|status]` | control Pixel Agents on port 4748 |
+| `claude-account add\|login\|list\|status\|use\|remove [name]` | rotate between Claude accounts when one hits its limit (see below) |
 
 The plugin puts these commands on Claude's PATH. To use them in your own shell, link them, for
 example: `ln -s "$PWD/bin/"* ~/.local/bin/`.
+
+## Claude accounts
+
+If you have more than one Claude subscription, Conductor can move Claude Code to the next one
+when the active account reaches its 5-hour or weekly limit.
+
+```bash
+claude-account add main          # save the account Claude Code is signed in with now
+claude-account login second      # sign another account in (browser); the current one stays
+claude-account status            # usage of every account, which one is active
+claude-account use second        # switch by hand
+```
+
+After that it is automatic: a background hook checks the active account's usage every few
+minutes and switches before it runs out, and a rate-limit error switches at once. A desktop
+notification tells you. Only the Claude sign-in changes: MCP server sign-ins, settings, plugins,
+history and memory stay the same. New sessions and `delegate` runs use the new account straight
+away; a session that was already running picks it up at its next token refresh, or with `/exit`
+and `claude --continue`. Saved sign-ins live in the macOS Keychain (elsewhere in
+`~/.claude/conductor/accounts/`, mode 600). Turn it off with `CONDUCTOR_ACCOUNTS=0`.
 
 ## Configuration
 
@@ -152,8 +180,8 @@ Everything can be set from the dashboard. These are the underlying files:
 
 | Path | Contents |
 |---|---|
-| `~/.config/conductor/conductor.env` | `CONDUCTOR_ORCHESTRATOR` (auto, claude, codex…), `CONDUCTOR_TIMEOUT`, `CONDUCTOR_MAX_LINES`, `CONDUCTOR_PIXEL`, `CONDUCTOR_PANEL_AUTOSTART`, `CONDUCTOR_OFFICE_AUTOSTART`, `CONDUCTOR_OFFICE_HIDE`, `CONDUCTOR_BUDGET_DAILY` / `_MONTHLY` |
-| `~/.config/conductor/workers.json` | per-worker `enabled` / `model` / `goodAt`, plus `custom` CLI definitions |
+| `~/.config/conductor/conductor.env` | `CONDUCTOR_ORCHESTRATOR` (auto, claude, codex…), `CONDUCTOR_DELEGATION` (off, light, balanced, max), `CONDUCTOR_REPORT` (brief, full), `CONDUCTOR_TIMEOUT`, `CONDUCTOR_MAX_LINES`, `CONDUCTOR_PIXEL`, `CONDUCTOR_PANEL_AUTOSTART`, `CONDUCTOR_OFFICE_AUTOSTART`, `CONDUCTOR_OFFICE_HIDE`, `CONDUCTOR_BUDGET_DAILY` / `_MONTHLY`, `CONDUCTOR_ACCOUNTS`, `CONDUCTOR_ACCOUNT_THRESHOLD`, `CONDUCTOR_ACCOUNT_POLL` |
+| `~/.config/conductor/workers.json` | per-worker `enabled` / `model` / `goodAt` / `pool` (`[{ model, weight }]`), plus `custom` CLI definitions |
 | `~/.config/conductor/endpoints.json` | OpenAI-compatible endpoints with their secrets (mode 600); a 0.2 `local.env` is migrated automatically |
 | `~/.config/conductor/pricing.json` | price overrides per model |
 | `~/.claude/conductor/` | `logs/`, `runs.jsonl` (one record per task), `usage-index.json`, server logs |
@@ -225,3 +253,9 @@ Yönetici kendine iş vermez; Codex'e kurulduğunda altında Claude Code çalı�
 Kurulumdan sonra `/conductor:setup` çalıştır. Dashboard'u açmak için `conductor-panel open`
 yaz. Dashboard Türkçe ve İngilizce; Claude maliyetini, devredilen görevleri, worker'ları, ayarları
 ve piksel ofisi gösterir.
+
+Birden fazla Claude aboneliğin varsa: `claude-account add main` mevcut hesabı kaydeder,
+`claude-account login second` diğer hesaba mevcut oturumu bozmadan giriş yapar. Aktif hesap 5 saatlik
+ya da haftalık limite gelince Conductor Claude Code'u sıradaki hesaba geçirir; MCP girişleri ve
+ayarlar değişmez. Yeni oturumlar yeni hesabı hemen kullanır; açık oturum bir sonraki token
+yenilemesinde ya da `/exit` + `claude --continue` ile geçer.

@@ -110,3 +110,54 @@ test('delegate: the orchestrator host is excluded from its own worker list', () 
     if (all.includes(worker)) assert.ok(!ids(host).includes(worker), `${host} must not delegate to itself`);
   }
 });
+
+test('settings: model pool is validated, deduplicated and kept with weight 0', () => {
+  assert.ok(S.saveWorker('gemini', { pool: [{ model: 'a', weight: 101 }] }).length);
+  assert.ok(S.saveWorker('gemini', { pool: [{ model: 'bad model', weight: 1 }] }).length);
+  assert.ok(S.saveWorker('gemini', { pool: 'x' }).length);
+  assert.deepEqual(S.saveWorker('gemini', { pool: [{ model: 'a', weight: 60 }, { model: 'b', weight: 0 }, { model: 'a', weight: 5 }] }), []);
+  assert.deepEqual(S.findWorker('gemini').pool, [{ model: 'a', weight: 60 }, { model: 'b', weight: 0 }]);
+  S.saveWorker('gemini', { pool: [] });
+});
+
+test('delegate: pool pick holds the configured ratios and skips switched-off models', () => {
+  const w = { id: 'gemini', model: 'fallback', pool: [{ model: 'a', weight: 60 }, { model: 'b', weight: 30 }, { model: 'c', weight: 10 }, { model: 'off', weight: 0 }] };
+  assert.equal(D.pickModel({ ...w, pool: [] }, []), 'fallback');
+  assert.equal(D.pickModel({ ...w, pool: [{ model: 'x', weight: 0 }] }, []), 'fallback');
+  const now = 1e9, runs = [], seen = {};
+  for (let i = 0; i < 20; i++) { const m = D.pickModel(w, runs, now); seen[m] = (seen[m] || 0) + 1; runs.push({ worker: 'gemini', model: m, t: now }); }
+  assert.deepEqual(seen, { a: 12, b: 6, c: 2 });
+  // runs older than 14 days and other workers' runs do not count
+  assert.equal(D.pickModel(w, [{ worker: 'gemini', model: 'a', t: now - 20 * 86400 }, { worker: 'cursor', model: 'a', t: now }], now), 'a');
+});
+
+test('delegate: brief reports by default, full on request', () => {
+  assert.match(D.CONTRACT('/r', false), /STATUS: done \| partial \| failed/);
+  assert.match(D.CONTRACT('/r', false), /under 120 words/);
+  assert.match(D.CONTRACT('/r', false, 'full'), /at most 300 words/);
+  assert.equal(D.parseArgs(['w', 't'], {}).maxLines, 30);
+  assert.equal(D.parseArgs(['w', 't'], { CONDUCTOR_REPORT: 'full' }).maxLines, 60);
+  assert.equal(D.parseArgs(['w', 't'], { CONDUCTOR_REPORT: 'full', CONDUCTOR_MAX_LINES: '45' }).maxLines, 45);
+});
+
+test('nudge hook: reminds after N inline reads, resets on delegate, silent when off or no workers', () => {
+  const { spawnSync } = require('child_process');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'conductor-n-')), conf = path.join(home, 'c.env');
+  const env = { ...process.env, CONDUCTOR_HOME: home, CONDUCTOR_CONFIG: conf, CONDUCTOR_ROLE: '' };
+  const hook = (payload) => spawnSync('bash', [path.join(__dirname, '..', 'scripts', 'nudge.sh')], { input: JSON.stringify(payload), env, encoding: 'utf8' }).stdout;
+  const read = { session_id: 's1', tool_name: 'Read', tool_input: { file_path: '/x' } };
+  const bash = cmd => ({ session_id: 's1', tool_name: 'Bash', tool_input: { command: cmd } });
+  assert.equal(hook(read), '', 'no workers file → silent');
+  fs.writeFileSync(path.join(home, 'orchestrator-workers-claude.txt'), '- gemini: reading\n- codex: hard tasks\n');
+  fs.writeFileSync(conf, "CONDUCTOR_DELEGATION='max'\n");
+  for (let i = 0; i < 3; i++) assert.equal(hook(i % 2 ? bash('cd /r && cat a.js') : read), '');
+  const out = JSON.parse(hook(bash('rtk grep -n x f')));
+  assert.equal(out.hookSpecificOutput.hookEventName, 'PostToolUse');
+  assert.match(out.hookSpecificOutput.additionalContext, /4 inline file reads.*gemini, codex/);
+  assert.equal(hook(bash('npm test')), '', 'non-read commands do not count');
+  for (let i = 0; i < 3; i++) hook(read);
+  hook(bash('delegate gemini "x"'));
+  for (let i = 0; i < 3; i++) assert.equal(hook(read), '', 'counter restarts after a delegate call');
+  fs.writeFileSync(conf, "CONDUCTOR_DELEGATION='off'\n");
+  for (let i = 0; i < 10; i++) assert.equal(hook(read), '');
+});

@@ -20,6 +20,11 @@ const CONDUCTOR_KEYS = {
   CONDUCTOR_BUDGET_MONTHLY: v => v === '' || /^\d{1,7}(\.\d{1,4})?$/.test(v),
   CONDUCTOR_ORCHESTRATOR: v => v === '' || /^(auto|claude|codex|antigravity|gemini|cursor|copilot|opencode|qwen)$/.test(v),
   CONDUCTOR_OFFICE_HIDE: v => v === '' || /^[A-Za-z0-9._,-]{1,200}$/.test(v),
+  CONDUCTOR_DELEGATION: v => v === '' || /^(off|light|balanced|max)$/.test(v),
+  CONDUCTOR_REPORT: v => v === '' || v === 'brief' || v === 'full',
+  CONDUCTOR_ACCOUNTS: v => v === '' || v === '0' || v === '1',
+  CONDUCTOR_ACCOUNT_THRESHOLD: v => v === '' || (/^\d{2,3}$/.test(v) && +v >= 50 && +v <= 100),
+  CONDUCTOR_ACCOUNT_POLL: v => v === '' || (/^\d+$/.test(v) && +v >= 60 && +v <= 3600),
 };
 
 function readEnv(file) {

@@ -16,7 +16,18 @@ here="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -I -c 'import o
 up() { curl -fsS --max-time 1 "$1/api/health" >/dev/null 2>&1; }
 
 # ── dashboard ──
+# 0 when the running dashboard is older than this install (it would keep serving the old pages and API)
+outdated() {
+  local mine running
+  mine="$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' "$here/.claude-plugin/plugin.json" | sed -n 1p)"
+  running="$(curl -fsS --max-time 1 "$URL/api/health" 2>/dev/null | sed -nE 's/.*"version":"([^"]+)".*/\1/p')"
+  [ -n "$mine" ] && [ -n "$running" ] && [ "$mine" != "$running" ] && [ "$(printf '%s\n%s\n' "$mine" "$running" | sort -V | sed -n 1p)" = "$running" ]
+}
 start() {
+  if up "$URL" && outdated; then
+    kill "$(curl -fsS --max-time 1 "$URL/api/health" | sed -nE 's/.*"pid":([0-9]+).*/\1/p')" 2>/dev/null
+    for _ in $(seq 1 20); do up "$URL" || break; sleep 0.25; done
+  fi
   up "$URL" && { echo "conductor-panel: dashboard running at $URL"; return 0; }
   command -v node >/dev/null || { echo "conductor-panel: node not found" >&2; return 3; }
   CONDUCTOR_PANEL_PORT="$PORT" CONDUCTOR_OFFICE_PORT="$OPORT" \

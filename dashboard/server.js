@@ -17,6 +17,8 @@ const { UsageIndex } = require('./lib/usage');
 const cfg = require('./lib/config');
 const { listModels } = require('./lib/local');
 const S = require('../lib/settings');
+const ACC = require('../lib/accounts');
+const accounts = () => ACC.createManager({ env: { ...S.general(), ...process.env } });
 
 const HOME = os.homedir();
 const STATE = S.P.state;
@@ -53,7 +55,11 @@ function which(cmd) {
 }
 
 // ───────────── runs ─────────────
+let runsCache = { sig: '', runs: [] };
 function readRuns() {
+  const mtime = f => { try { const st = fs.statSync(f); return `${st.mtimeMs}:${st.size}`; } catch { return '-'; } };
+  const sig = `${mtime(S.P.runs)}|${mtime(USAGE_TSV)}`;
+  if (sig === runsCache.sig) return runsCache.runs;
   const runs = [];
   try {
     for (const line of fs.readFileSync(S.P.runs, 'utf8').split('\n')) {
@@ -61,7 +67,7 @@ function readRuns() {
       try { const r = JSON.parse(line); if (r && r.worker && r.t) runs.push(r); } catch {}
     }
   } catch {}
-  const firstT = runs.length ? Math.min(...runs.map(r => r.t)) : Infinity;
+  const firstT = runs.reduce((a, r) => Math.min(a, r.t), Infinity);
   try { // runs recorded before runs.jsonl existed (no task text)
     for (const line of fs.readFileSync(USAGE_TSV, 'utf8').split('\n')) {
       const [ts, worker, model, write, secs, rc] = line.split('\t');
@@ -71,7 +77,25 @@ function readRuns() {
       runs.push({ id: `legacy-${ts}-${worker}`, t, worker, model, write: +write, secs: +secs, rc: +rc, legacy: true, task: '', report: '' });
     }
   } catch {}
-  return runs.sort((a, b) => b.t - a.t);
+  runs.sort((a, b) => b.t - a.t);
+  runsCache = { sig, runs };
+  return runs;
+}
+// Runs in flight, from the markers `delegate` keeps while a worker runs. A marker whose process is gone is stale.
+function readActive() {
+  const out = [];
+  let names = [];
+  try { names = fs.readdirSync(S.P.running); } catch { return out; }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const file = path.join(S.P.running, name);
+    try {
+      const r = JSON.parse(fs.readFileSync(file, 'utf8'));
+      process.kill(r.pid, 0);
+      out.push({ ...r, running: true, secs: Date.now() / 1000 - r.t });
+    } catch (e) { if (e.code !== 'EPERM') { try { fs.unlinkSync(file); } catch {} } }
+  }
+  return out.sort((a, b) => b.t - a.t);
 }
 
 // ───────────── workers ─────────────
@@ -91,7 +115,7 @@ async function workerInfo() {
     const kind = w.endpoint ? 'endpoint' : w.custom ? 'custom' : 'builtin';
     const p = w.endpoint ? null : which(w.cli);
     const info = {
-      id: w.id, label: w.label, kind, enabled: w.enabled, model: w.model, defaultModel: w.defaultModel || '', goodAt: w.goodAt,
+      id: w.id, label: w.label, kind, enabled: w.enabled, model: w.model, defaultModel: w.defaultModel || '', goodAt: w.goodAt, pool: w.pool,
       via: w.via, install: w.install || '', host: w.host || null, notes: w.notes || '', listsModels: !!(w.listModels || w.endpoint),
       available: w.endpoint ? !!w.url : !!p, path: p, version: p ? await cliVersion(w.cli) : null,
     };
@@ -218,7 +242,7 @@ const POST = {
   '/api/settings': async b => { const errors = saveSettings(b); return [errors.length ? 400 : 200, { ok: !errors.length, errors, settings: getSettings() }]; },
   '/api/workers/save': async b => {
     if (!S.findWorker(b.id)) return [400, { ok: false, errors: [{ field: 'id', code: 'unknown_field' }] }];
-    const errors = S.saveWorker(S.findWorker(b.id).id, { enabled: b.enabled, model: b.model, goodAt: b.goodAt });
+    const errors = S.saveWorker(S.findWorker(b.id).id, { enabled: b.enabled, model: b.model, goodAt: b.goodAt, pool: b.pool });
     return [errors.length ? 400 : 200, { ok: !errors.length, errors }];
   },
   '/api/endpoints/save': async b => { const errors = S.saveEndpoint(b); return [errors.length ? 400 : 200, { ok: !errors.length, errors }]; },
@@ -228,6 +252,12 @@ const POST = {
   '/api/office/start': async () => { const r = await sh(PANEL_BIN, ['office', 'start'], 30000); return [200, { ...(await officeStatus()), output: r.out.trim() }]; },
   '/api/office/stop': async () => { const r = await sh(PANEL_BIN, ['office', 'stop'], 30000); return [200, { ...(await officeStatus()), output: r.out.trim() }]; },
   '/api/rescan': async () => { usage.scan(); versionCache.clear(); modelsCache.clear(); return [200, { ok: true }]; },
+  '/api/accounts/use': async b => {
+    const name = String(b.name || '');
+    if (!ACC.NAME_RE.test(name)) return [400, { ok: false, error: 'bad name' }];
+    try { await accounts().use(name, 'dashboard'); return [200, { ok: true, ...(await accounts().status()) }]; }
+    catch (e) { return [400, { ok: false, error: e.message }]; }
+  },
 };
 
 const server = http.createServer(async (req, res) => {
@@ -252,6 +282,7 @@ const server = http.createServer(async (req, res) => {
       return fs.createReadStream(file).pipe(res);
     }
     if (p === '/api/health') return json(res, 200, { ok: true, pid: process.pid, version: VERSION });
+    if (p === '/api/live') { const last = readRuns().find(r => !r.legacy); return json(res, 200, { active: readActive(), lastId: last ? last.id : '', lastT: last ? last.t : 0, version: VERSION }); }
     if (p === '/api/usage') {
       if (Date.now() - usage.progress.lastScan > 30000) usage.scan();
       const days = Math.max(0, Math.min(3650, Number(url.searchParams.get('days') ?? 30) || 0));
@@ -259,7 +290,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/runs') {
       const runs = readRuns();
-      return json(res, 200, { runs: runs.slice(0, Math.min(20000, Number(url.searchParams.get('limit') || 2000))), total: runs.length });
+      return json(res, 200, { runs: runs.slice(0, Math.min(20000, Number(url.searchParams.get('limit') || 2000))), total: runs.length, active: readActive() });
     }
     if (p === '/api/workers') return json(res, 200, { workers: await workerInfo() });
     if (p === '/api/workers/models') return json(res, 200, await workerModels(url.searchParams.get('id') || ''));
@@ -267,6 +298,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/settings') return json(res, 200, getSettings());
     if (p === '/api/setup') return json(res, 200, await setupStatus());
     if (p === '/api/office') return json(res, 200, await officeStatus());
+    if (p === '/api/accounts') return json(res, 200, await accounts().status({ refresh: url.searchParams.get('refresh') === '1' }));
     if (p === '/api/log') {
       const name = url.searchParams.get('name') || '';
       if (!/^[\w.-]+\.log$/.test(name)) return json(res, 400, { error: 'bad name' });

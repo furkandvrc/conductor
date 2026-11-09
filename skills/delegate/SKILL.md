@@ -46,14 +46,37 @@ Typical fits:
 - **Do it yourself** when the task needs tight back-and-forth, or touches secrets, auth, payments
   or infrastructure.
 
-Delegate whenever checking a worker's result (its report, its diff) costs you less than doing the
-work yourself. That is usually true for volume work, even when it arrives one file at a time.
+**When.** The user sets how hard to delegate on the dashboard (Settings → Delegation level); the
+session-start note carries that level as a concrete list. At the default level, delegate by
+default when the next step is exploring or reading more than ~3 files, a long log or doc, a review,
+a multi-file or mechanical edit, tests from a spec, translation or a commit message. Do it yourself
+when it is a small edit in a file you already read, a decision, or anything with secrets, auth,
+payments or infra. Do not weigh "is it worth it" case by case: a worker's report costs you a few
+hundred tokens, reading the files yourself costs thousands. A mid-session `conductor:` reminder
+after several inline reads means you have drifted; hand off the next chunk.
+
+**Models.** A worker can have a model pool (dashboard → Workers): models switched on with a share
+each. Without `--model`, `delegate` picks from the pool so the shares hold over time; `delegate
+list` shows them. Pass `--model` when the task needs a specific one (a stronger model for a hard
+task, a fast one for a lookup).
 
 ## Protocol
 
-1. **Brief like a contractor.** The worker has none of your context. State the goal, the exact
-   files or directories, the constraints (style, APIs to keep, what not to touch) and the
-   acceptance check. Send one task per call. For edits, name the files it may change.
+1. **Brief like a contractor: long brief, short report.** The worker has none of your context,
+   and a detailed brief is cheap for you while a vague one costs a retry. Send one task per call,
+   in this shape (write long briefs to a file and pass `"$(cat brief.md)"`):
+
+   ```
+   GOAL: what to produce and why, in one or two sentences
+   FILES: what to read first; for --write, exactly which files it may change
+   CONTEXT: what you already know (APIs, decisions made, conventions to match) so it need not rediscover it
+   CONSTRAINTS: what not to touch, style, APIs to keep
+   DONE WHEN: the acceptance check
+   ```
+
+   Workers end with a fixed, short report (under 120 words unless the user chose full reports):
+   `STATUS: done|partial|failed`, `ANSWER:`, `CHANGED:`, `UNSURE:`. Do not ask for more than that;
+   the full transcript is in the log if you ever need it.
 2. **Run.** Run independent tasks as parallel `delegate` calls in the background when your host
    supports it.
 3. **Verify. Never relay a worker's claim as fact.** For `--write`, read the `git diff` of the

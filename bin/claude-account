@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# claude-account — rotate between Claude accounts when one hits its limit; see `claude-account --help`.
+# Implementation: lib/accounts.js
+here="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"
+command -v node >/dev/null 2>&1 || { echo "claude-account: Node.js 18+ is required" >&2; exit 3; }
+exec node "$here/lib/accounts.js" "$@"

@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.6.0
+
+### Added
+
+- **Claude account rotation.** Keep several Claude subscriptions signed in; when the active one
+  reaches its 5-hour or weekly limit, Conductor moves Claude Code to the next account that still
+  has room. `claude-account add <name>` saves the current sign-in, `claude-account login <name>`
+  signs another account in without touching the current one, `claude-account list|status|use|
+  remove` manage them. A background `UserPromptSubmit` hook checks usage (at most every 5
+  minutes) and a `StopFailure` hook reacts to a rate-limit error at once; a desktop notification
+  says when it switched. Only the `claudeAiOauth` field of Claude Code's credential store and
+  `oauthAccount` in `~/.claude.json` change; MCP sign-ins and every other setting stay as they
+  are. New sessions and `delegate` runs use the new account immediately; a running session picks
+  it up at its next token refresh, or with `/exit` + `claude --continue`.
+- Dashboard → Settings: a Claude accounts card with usage per account and a switch button.
+- Settings `CONDUCTOR_ACCOUNTS` (0 turns rotation off), `CONDUCTOR_ACCOUNT_THRESHOLD` (usage %
+  that counts as limited, default 98), `CONDUCTOR_ACCOUNT_POLL` (seconds between checks, 300).
+
+## 0.5.0
+
+### Added
+
+- **Running tasks are visible.** `delegate` keeps a marker in `running/` while a worker runs, so the
+  dashboard shows it the moment it starts, with a live timer: in the top bar, on Overview and on
+  Tasks. A marker whose process has died is removed by the dashboard.
+- **Worker activity timeline on Overview:** one row per worker, one mark per task, over 24 hours,
+  7 or 30 days. Click a mark for the task, report and log.
+
+### Changed
+
+- **New dashboard design:** a top bar instead of the sidebar, a plain sentence saying what is
+  happening now, light and dark themes built on one palette.
+- **Tasks opens on the last 7 days** (24 hours, 30 days and All are one click away), and Recent
+  tasks on Overview covers 7 days. Records from before task text was kept only show under All.
+  Nothing is deleted.
+- Overview and Tasks refresh when a task starts or ends, and an open tab reloads itself when the
+  dashboard is updated.
+
+### Fixed
+
+- A dashboard left running by an older install kept serving its old pages after a plugin update;
+  `conductor-panel start` (run at session start) now replaces an older one.
+- The Workers and Tasks pages re-rendered every minute, discarding unsaved edits and search focus.
+- Switching pages quickly could paint the slower page over the one you had opened.
+- A worker's colour changed when another worker was switched off.
+- Durations could read "1 min 60 s".
+- `/api/runs` would fail on a very large `runs.jsonl`; it is also no longer re-parsed on every request.
+
+## 0.4.0
+
+### Added
+
+- **Delegation level** (dashboard → Settings, `CONDUCTOR_DELEGATION`: off, light, balanced, max).
+  The session-start note now gives the orchestrator a concrete list of what to delegate at that
+  level instead of a cost judgement it made case by case (and almost always answered "inline":
+  no `delegate` run in the week after 0.3.1).
+- **Mid-session reminder.** A `PostToolUse` hook counts inline file reads (Read/Grep/Glob and
+  `cat`/`grep`/`sed -n`/… through Bash) since the last `delegate` call and, every 20/8/4 of them
+  (light/balanced/max), adds one line to the context naming the workers. Silent otherwise.
+- **Model pools.** Each worker can list models with an on/off switch and a weight (dashboard →
+  Workers). Without `--model`, `delegate` picks the model furthest below its share over the last
+  14 days, so a 60/30/10 split holds even over a few runs. `delegate list` shows the shares.
+
+### Changed
+
+- **Brief reports by default** (`CONDUCTOR_REPORT=brief`): workers end with
+  `STATUS / ANSWER / CHANGED / UNSURE` in under 120 words, and the default report cap is 30 lines.
+  `full` restores the 300-word report and 60 lines.
+- The delegate skill has a brief template (goal, files, context, constraints, done-when): long
+  brief, short report.
+
 ## 0.3.1
 
 ### Changed

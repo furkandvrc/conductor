@@ -3,32 +3,37 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Conductor</title>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<a class="skip" href="#main">Skip to content</a>
-<div class="shell">
-  <nav class="side" aria-label="Conductor">
-    <div class="brand"><span class="logo" aria-hidden="true">◆</span><div><b>Conductor</b><small data-i18n="brand.sub">Opus orchestrates</small></div></div>
-    <a href="#/overview" data-page="overview"><span class="ic" aria-hidden="true">▦</span><span data-i18n="nav.overview">Overview</span></a>
-    <a href="#/claude" data-page="claude"><span class="ic" aria-hidden="true">◎</span><span data-i18n="nav.claude">Claude usage</span></a>
-    <a href="#/workers" data-page="workers"><span class="ic" aria-hidden="true">⚙</span><span data-i18n="nav.workers">Workers</span></a>
-    <a href="#/tasks" data-page="tasks"><span class="ic" aria-hidden="true">☰</span><span data-i18n="nav.tasks">Tasks</span></a>
-    <a href="#/office" data-page="office"><span class="ic" aria-hidden="true">▣</span><span data-i18n="nav.office">Office</span></a>
-    <a href="#/settings" data-page="settings"><span class="ic" aria-hidden="true">✎</span><span data-i18n="nav.settings">Settings</span></a>
-    <div class="side-foot">
-      <div class="idx" id="idxStatus" role="status"></div>
-      <div class="theme" role="group" aria-label="Language">
-        <button data-lang="en">EN</button><button data-lang="tr">TR</button>
-      </div>
-      <div class="theme" role="group" aria-label="Theme">
-        <button data-theme-set="auto" data-i18n-title="theme.auto">◐</button><button data-theme-set="light" data-i18n-title="theme.light">☀</button><button data-theme-set="dark" data-i18n-title="theme.dark">☾</button>
-      </div>
-    </div>
+<a class="skip" href="#main" data-i18n="common.skip">Skip to content</a>
+<header class="topbar">
+  <a class="brand" href="#/overview" aria-label="Conductor">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 21 19.5 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="20" cy="4" r="2.2" fill="currentColor"/></svg>
+    <b>Conductor</b>
+  </a>
+  <nav class="nav" aria-label="Conductor">
+    <a href="#/overview" data-page="overview" data-i18n="nav.overview">Overview</a>
+    <a href="#/tasks" data-page="tasks" data-i18n="nav.tasks">Tasks</a>
+    <a href="#/workers" data-page="workers" data-i18n="nav.workers">Workers</a>
+    <a href="#/claude" data-page="claude" data-i18n="nav.claude">Claude usage</a>
+    <a href="#/office" data-page="office" data-i18n="nav.office">Office</a>
+    <a href="#/settings" data-page="settings" data-i18n="nav.settings">Settings</a>
   </nav>
-  <main id="main" tabindex="-1"></main>
-</div>
+  <div class="top-right">
+    <a class="live" id="live" href="#/tasks" role="status"></a>
+    <div class="toggle" role="group" aria-label="Language">
+      <button data-lang="en">EN</button><button data-lang="tr">TR</button>
+    </div>
+    <div class="toggle" role="group" aria-label="Theme">
+      <button data-theme-set="auto" data-i18n-title="theme.auto">◐</button><button data-theme-set="light" data-i18n-title="theme.light">☀</button><button data-theme-set="dark" data-i18n-title="theme.dark">☾</button>
+    </div>
+  </div>
+</header>
+<main id="main" tabindex="-1"></main>
+<footer class="foot"><span class="idx" id="idxStatus" role="status"></span></footer>
 <div class="tip" id="tip" role="tooltip" hidden></div>
 <dialog id="dlg" aria-labelledby="dlgTitle"><header><b id="dlgTitle"></b><button class="btn" id="dlgClose" data-i18n="common.close">Close</button></header><div id="dlgBody"></div></dialog>
 <script src="/i18n.js"></script>

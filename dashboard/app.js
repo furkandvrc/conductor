@@ -35,9 +35,10 @@ const tok = v => CF.format(v || 0);
 const pct = v => isFinite(v) ? new Intl.NumberFormat(LOCALE, { style: 'percent', maximumFractionDigits: 0 }).format(v) : '–';
 function dur(sec) {
   if (sec == null || isNaN(sec)) return '–';
-  if (sec < 60) return t('dur.s', { s: Math.round(sec) });
-  if (sec < 3600) return t('dur.m', { m: Math.floor(sec / 60), s: Math.round(sec % 60) });
-  return t('dur.h', { h: Math.floor(sec / 3600), m: Math.round((sec % 3600) / 60) });
+  const n = Math.round(sec);
+  if (n < 60) return t('dur.s', { s: n });
+  if (n < 3600) return t('dur.m', { m: Math.floor(n / 60), s: n % 60 });
+  return t('dur.h', { h: Math.floor(n / 3600), m: Math.floor((n % 3600) / 60) });
 }
 const dt = v => new Date(typeof v === 'number' ? v * 1000 : v).toLocaleString(LOCALE, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 const dayLabel = d => new Date(d + 'T12:00:00').toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' });
@@ -82,16 +83,17 @@ const TOKEN_SERIES = () => [
 let WK = {}, WK_ORDER = [];
 function setWorkers(list) {
   WK = {}; WK_ORDER = [];
-  const ranked = [...list.filter(w => w.enabled && w.available), ...list.filter(w => !(w.enabled && w.available))];
-  ranked.forEach((w, i) => { WK[w.id] = { label: w.label, color: i < 8 ? `var(--s${i + 1})` : 'var(--sx)' }; WK_ORDER.push(w.id); });
+  list.forEach((w, i) => { WK[w.id] = { label: w.label, color: i < 8 ? `var(--s${i + 1})` : 'var(--sx)', usable: w.enabled && w.available }; });
+  WK_ORDER = [...list.filter(w => w.enabled && w.available), ...list.filter(w => !(w.enabled && w.available))].map(w => w.id);
 }
 const loadWorkers = async () => { const r = await api('/api/workers'); setWorkers(r.workers); return r.workers; };
 
 // ───────────────────────── tooltip ─────────────────────────
-function showTip(e, title, rows, total) {
+function showTip(e, title, rows, total, body) {
   tipEl.replaceChildren(h('b', {}, title),
     ...rows.map(([label, color, value]) => h('div', { class: 'r' }, h('span', {}, h('i', { class: 'sw', style: `background:${color}` }), label), h('span', { class: 'num' }, value))),
-    total != null ? h('div', { class: 'r tot' }, h('span', {}, t('common.total')), h('span', { class: 'num' }, total)) : '');
+    total != null ? h('div', { class: 'r tot' }, h('span', {}, t('common.total')), h('span', { class: 'num' }, total)) : '',
+    body ? h('div', { class: 'body' }, body) : '');
   tipEl.hidden = false;
   const r = tipEl.getBoundingClientRect();
   let x = e.clientX + 14, y = e.clientY + 14;
@@ -212,18 +214,19 @@ const seg = (options, current, onChange) => h('div', { class: 'seg', role: 'grou
 const card = (title, sub, ...body) => h('section', { class: 'card' }, h('h2', {}, title, sub ? h('small', {}, sub) : null), body);
 const card2 = card;
 function wpill(id) { const w = WK[id] || { label: id, color: 'var(--sx)' }; return h('span', { class: 'pill' }, h('i', { class: 'sw', style: `background:${w.color}` }), w.label); }
-const status = r => r.rc === 0 ? h('span', { class: 'ok' }, t('common.ok')) : h('span', { class: 'fail' }, t('common.fail', { rc: r.rc }));
+const elapsed = r => h('span', { class: 'elapsed', 'data-t': r.t }, dur(Date.now() / 1000 - r.t));
+const status = r => r.running ? h('span', { class: 'running' }, t('tk.running')) : r.rc === 0 ? h('span', { class: 'ok' }, t('common.ok')) : h('span', { class: 'fail' }, t('common.fail', { rc: r.rc }));
 
 const dlg = $('#dlg');
 $('#dlgClose').addEventListener('click', () => dlg.close());
 function openDialog(title, ...body) { $('#dlgTitle').textContent = title; $('#dlgBody').replaceChildren(...real(body)); dlg.showModal(); }
 function openRun(r) {
   const logBox = h('pre', {}, '');
-  const name = r.log ? r.log.split('/').pop() : '';
+  const name = !r.running && r.log ? r.log.split('/').pop() : '';
   openDialog(t('tk.detail'),
-    h('div', { class: 'bar' }, wpill(r.worker), h('span', { class: 'pill mono' }, r.model || '–'), status(r), h('span', { class: 'pill' }, dur(r.secs)), r.write ? h('span', { class: 'pill' }, t('common.write')) : null, r.project ? h('span', { class: 'pill' }, r.project) : null, h('span', { class: 'note' }, dt(r.t))),
+    h('div', { class: 'bar' }, wpill(r.worker), h('span', { class: 'pill box mono' }, r.model || '–'), status(r), h('span', { class: 'pill box' }, r.running ? elapsed(r) : dur(r.secs)), r.write ? h('span', { class: 'pill box' }, t('common.write')) : null, r.project ? h('span', { class: 'pill box' }, r.project) : null, h('span', { class: 'note' }, dt(r.t))),
     h('h3', {}, t('tk.task')), h('pre', {}, r.task || (r.legacy ? t('tk.noText') : t('tk.empty2'))),
-    h('h3', {}, t('tk.report')), h('pre', {}, r.report || t('tk.empty2')),
+    h('h3', {}, t('tk.report')), h('pre', {}, r.report || (r.running ? t('tk.reportLater') : t('tk.empty2'))),
     name ? [h('h3', {}, t('tk.log') + ' ', h('button', { class: 'btn', onclick: async e => {
       e.target.disabled = true; logBox.textContent = t('common.loading');
       try { const res = await fetch('/api/log?name=' + encodeURIComponent(name)); logBox.textContent = res.ok ? await res.text() : t('tk.logFail', { s: res.status }); } catch { logBox.textContent = t('tk.logFail', { s: '-' }); }
@@ -231,7 +234,8 @@ function openRun(r) {
 }
 
 // ───────────────────────── pages ─────────────────────────
-const state = { claudeDays: 30, claudeProject: '', taskWorker: '', taskStatus: '', taskQuery: '' };
+const state = { claudeDays: 30, claudeProject: '', taskWorker: '', taskStatus: '', taskQuery: '', taskDays: 7, scoreDays: 7 };
+const RANGES = () => [[1, t('range.24h')], [7, t('common.days', { n: 7 })], [30, t('common.days', { n: 30 })], [0, t('common.all')]];
 
 function setupCard(st) {
   const missing = st.items.filter(i => !i.ok);
@@ -246,36 +250,89 @@ function setupCard(st) {
       !i.ok && i.id === 'pixel_hooks' ? h('a', { href: '#/office' }, t('setup.configure')) : null))));
 }
 
+// The score: one staff per worker, one mark per task, placed by when it ran. Runs in flight breathe at the right edge.
+function scoreTicks(days, from, span) {
+  const out = [], d = new Date(from * 1000);
+  if (days === 1) {
+    d.setMinutes(0, 0, 0); d.setHours(d.getHours() + (6 - d.getHours() % 6));
+    for (; d.getTime() / 1000 < from + span; d.setHours(d.getHours() + 6)) out.push({ at: d.getTime() / 1000, label: d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) });
+  } else {
+    const step = days > 7 ? 5 : 1;
+    d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + 1);
+    for (; d.getTime() / 1000 < from + span; d.setDate(d.getDate() + step)) out.push({ at: d.getTime() / 1000, label: dayLabel(localDay(d.getTime() / 1000)) });
+  }
+  return out;
+}
+function scoreCard(runs, active) {
+  const box = h('section', { class: 'card score' });
+  const draw = () => {
+    const days = state.scoreDays || 30, now = Date.now() / 1000, span = days * 86400, from = now - span;
+    const pos = v => (Math.max(from, v) - from) / span * 100;
+    const done = runs.filter(r => !r.legacy && r.t >= from), shown = [...done, ...active];
+    const ids = [...WK_ORDER.filter(id => WK[id].usable), ...new Set(shown.map(r => r.worker).filter(id => !WK[id] || !WK[id].usable))];
+    const ok = done.filter(r => r.rc === 0).length;
+    const ticks = scoreTicks(days, from, span).filter(k => pos(k.at) < 92);
+    const lines = ticks.map(k => h('i', { class: 'tickline', style: `left:${pos(k.at)}%` }));
+    const mark = r => {
+      const end = r.running ? now : r.t, left = pos(end - (r.secs || 0));
+      const c = (WK[r.worker] || {}).color || 'var(--sx)', name = (WK[r.worker] || {}).label || r.worker;
+      return h('button', { class: 'mark' + (r.running ? ' on' : r.rc ? ' bad' : ''), style: `left:${left}%;width:${pos(end) - left}%;--c:${c}`, 'aria-label': `${name}, ${dt(end)}, ${r.running ? t('tk.running') : r.rc ? t('tk.fail') : t('tk.ok')}: ${(r.task || '').slice(0, 80)}`,
+        onclick: () => openRun(r), onmouseleave: hideTip,
+        onmousemove: e => showTip(e, `${name}, ${dt(end)}`, [[t('col.status'), c, r.running ? t('tk.running') : r.rc ? t('common.fail', { rc: r.rc }) : t('common.ok')], [t('col.duration'), c, dur(r.running ? now - r.t : r.secs)]], null, r.task) });
+    };
+    box.replaceChildren(...real([
+      h('div', { class: 'score-head' },
+        h('h2', {}, t('score.title'), h('small', {}, done.length ? t('score.sub', { n: NF.format(done.length), pct: pct(ok / done.length), time: dur(done.reduce((a, r) => a + (r.secs || 0), 0)) }) : t('score.empty'))),
+        seg(RANGES().slice(0, 3), days, v => { state.scoreDays = v; draw(); })),
+      ids.map(id => h('div', { class: 'staff' },
+        h('div', { class: 'who', title: (WK[id] || {}).label || id }, h('i', { class: 'sw', style: `background:${(WK[id] || {}).color || 'var(--sx)'}` }), (WK[id] || {}).label || id),
+        h('div', { class: 'lane' }, lines.map(l => l.cloneNode()), shown.filter(r => r.worker === id).map(mark)))),
+      h('div', { class: 'axis' }, h('span', {}), h('div', { class: 'ticks' }, ticks.filter((_, i) => i % Math.ceil(ticks.length / Math.max(1, Math.floor((Math.min(innerWidth, 1280) - 230) / 64))) === 0).map(k => h('span', { style: `left:${pos(k.at)}%` }, k.label)), h('span', { class: 'end', style: 'left:100%' }, t('score.now')))),
+      h('div', { class: 'score-key' }, h('span', {}, h('i', {}), t('tk.ok')), h('span', {}, h('i', { class: 'bad' }), t('tk.fail')), h('span', {}, h('i', { class: 'on' }), t('tk.running')))]));
+  };
+  draw();
+  return box;
+}
+function nowCard(active) {
+  if (!active.length) return null;
+  return h('section', { class: 'card now' }, h('h2', {}, t('now.title')), active.map(r => h('div', { class: 'now-row', tabindex: '0', role: 'button', onclick: () => openRun(r), onkeydown: e => { if (e.key === 'Enter') openRun(r); } },
+    h('i', { class: 'pulse', 'aria-hidden': 'true' }), wpill(r.worker), h('span', { class: 'clamp1' }, r.task || '–'), r.project ? h('span', { class: 'note' }, r.project) : null, h('span', { class: 'note num' }, elapsed(r)))));
+}
+
 async function pageOverview() {
+  const seq = routeSeq;
   const [u, runsR, set, setup] = await Promise.all([api('/api/usage?days=30'), api('/api/runs?limit=5000'), api('/api/settings'), api('/api/setup'), loadWorkers()]);
+  if (seq !== routeSeq) return;
   setIdx(u.indexing);
-  const runs = runsR.runs, since30 = Date.now() / 1000 - 30 * 86400;
-  const r30 = runs.filter(r => r.t >= since30), ok30 = r30.filter(r => r.rc === 0).length;
+  const runs = runsR.runs, active = runsR.active || [], since7 = Date.now() / 1000 - 7 * 86400;
+  const finished = runs.filter(r => !r.legacy), recent = finished.filter(r => r.t >= since7).slice(0, 7);
   const T = u.totals, cacheHit = T.cr / Math.max(1, T.in + T.cw + T.cr);
   const sum = x => x.in + x.out + x.cw + x.cr;
   const c = set.conductor;
+  const lead = active.length ? t('lead.running', { n: NF.format(active.length) }) : finished.length ? t('lead.idle', { ago: rel(finished[0].t) }) : t('lead.none');
   main.replaceChildren(h('div', {},
-    pageHead(t('ov.title'), t('ov.sub', { note: t('cost.note') }), h('button', { class: 'btn', onclick: () => route() }, t('common.refresh'))),
     setupCard(setup),
-    h('div', { class: 'grid g4' },
+    h('p', { class: 'lead' }, lead),
+    nowCard(active),
+    scoreCard(runs, active),
+    h('div', { class: 'ledger' },
       kpi(t('ov.today'), usd(u.today.cost), t('ov.tokensReplies', { tokens: tok(sum(u.today)), replies: NF.format(u.today.msgs) }), budgetMeter(u.today.cost, +c.CONDUCTOR_BUDGET_DAILY)),
       kpi(t('ov.month'), usd(u.month.cost), t('ov.tokens', { tokens: tok(sum(u.month)) }), budgetMeter(u.month.cost, +c.CONDUCTOR_BUDGET_MONTHLY)),
       kpi(t('ov.last30'), usd(T.cost), t('ov.subShare', { tokens: tok(sum(T)), pct: pct(u.subagents.cost / Math.max(1e-9, T.cost)) })),
       kpi(t('ov.cacheHit'), pct(cacheHit), t('ov.cacheSub'))),
-    h('div', { class: 'grid mt' }, card(t('ov.dailyCost'), t('ov.byModelHover'), h('div', { class: 'chart', id: 'cCost' }))),
+    h('p', { class: 'note cost-note' }, t('cost.note')),
+    card(t('ov.dailyCost'), t('ov.byModelHover'), h('div', { class: 'chart', id: 'cCost' })),
     h('div', { class: 'grid g2 mt' },
-      card(t('ov.tokenMix'), t('common.days', { n: 30 }), stackLine(TOKEN_SERIES().map(x => ({ label: x.label, color: x.color, value: T[x.key] })))),
-      card(t('ov.projects'), t('ov.projectsSub'), hbars(u.byProject.slice(0, 8).map(p => ({ label: p.key, value: p.cost })), usd))),
-    h('div', { class: 'grid g2 mt' },
-      card(t('ov.delegated'), t('ov.delegatedSub', { n: NF.format(r30.length), pct: r30.length ? pct(ok30 / r30.length) : '–', time: dur(r30.reduce((a, r) => a + (r.secs || 0), 0)) }), h('div', { class: 'chart', id: 'cRuns' })),
-      card(t('ov.recent'), null, runs.length ? h('div', {}, runs.slice(0, 7).map(r => h('div', { class: 'bar recent', tabindex: '0', role: 'button', onclick: () => openRun(r), onkeydown: e => { if (e.key === 'Enter') openRun(r); } },
-        wpill(r.worker), h('span', { class: 'clamp1' }, r.task || r.model || '–'), status(r), h('span', { class: 'note' }, rel(r.t))))) : h('div', { class: 'empty' }, t('ov.noTasks')))),
+      card(t('ov.recent'), t('common.days', { n: 7 }), recent.length ? h('div', {}, recent.map(r => h('div', { class: 'bar recent', tabindex: '0', role: 'button', onclick: () => openRun(r), onkeydown: e => { if (e.key === 'Enter') openRun(r); } },
+        wpill(r.worker), h('span', { class: 'clamp1' }, r.task || r.model || '–'), status(r), h('span', { class: 'note' }, rel(r.t))))) : h('div', { class: 'empty' }, finished.length ? [t('ov.noRecent'), ' ', h('a', { href: '#/tasks' }, t('ov.allTasks'))] : t('ov.noTasks'))),
+      h('div', { class: 'grid' },
+        card(t('ov.tokenMix'), t('common.days', { n: 30 }), stackLine(TOKEN_SERIES().map(x => ({ label: x.label, color: x.color, value: T[x.key] })))),
+        card(t('ov.projects'), t('ov.projectsSub'), hbars(u.byProject.slice(0, 6).map(p => ({ label: p.key, value: p.cost })), usd)))),
   ));
   stackedBars($('#cCost'), {
     labels: u.days.map(d => d.date), series: u.byModel.map(m => ({ key: m.key, label: modelName(m.key), color: modelColor(m.key) })),
     data: (i, k) => (u.days[i].models[k] || {}).cost || 0, fmt: usd, axisFmt: usdAxis, xfmt: dayLabel, xtitle: dayTitle, aria: t('ov.dailyCost'),
   });
-  runsChart($('#cRuns'), runs, 30);
 }
 
 function runsChart(el, runs, n) {
@@ -289,7 +346,9 @@ function runsChart(el, runs, n) {
 
 async function pageClaude() {
   const q = `days=${state.claudeDays}${state.claudeProject ? '&project=' + encodeURIComponent(state.claudeProject) : ''}`;
+  const seq = routeSeq;
   const u = await api('/api/usage?' + q);
+  if (seq !== routeSeq) return;
   setIdx(u.indexing);
   const T = u.totals, days = u.days.map(d => d.date);
   const projectSel = h('select', { 'aria-label': t('col.project'), onchange: e => { state.claudeProject = e.target.value; route(); } },
@@ -303,7 +362,7 @@ async function pageClaude() {
     pageHead(t('cl.title'), t('cl.sub', { note: t('cost.note') }),
       seg([[7, t('common.days', { n: 7 })], [30, t('common.days', { n: 30 })], [90, t('common.days', { n: 90 })], [365, t('common.year')], [0, t('common.all')]], state.claudeDays, v => { state.claudeDays = v; route(); }), projectSel),
     u.unpriced.length ? h('div', { class: 'card warnbox' }, t('cl.unpriced', { list: u.unpriced.join(', ') })) : null,
-    h('div', { class: 'grid g4' },
+    h('div', { class: 'ledger' },
       kpi(t('cl.cost'), usd(T.cost), t('cl.replies', { n: NF.format(T.msgs) })),
       kpi(t('cl.totalTokens'), tok(T.in + T.out + T.cw + T.cr), t('cl.outSub', { v: tok(T.out) })),
       kpi(t('ov.cacheHit'), pct(T.cr / Math.max(1, T.in + T.cw + T.cr)), t('cl.readSub', { v: tok(T.cr) })),
@@ -328,7 +387,9 @@ async function pageClaude() {
 }
 
 async function pageWorkers() {
+  const seq = routeSeq;
   const [ws, runsR] = await Promise.all([loadWorkers(), api('/api/runs?limit=5000')]);
+  if (seq !== routeSeq) return;
   const runs = runsR.runs, since = Date.now() / 1000 - 30 * 86400;
   const order = w => (w.enabled && w.available ? 0 : w.available ? 1 : 2);
   const sorted = [...ws].sort((a, b) => order(a) - order(b));
@@ -350,16 +411,38 @@ async function pageWorkers() {
     };
     const save = async extra => { const r = await post('/api/workers/save', { id: w.id, model: modelIn.value, goodAt: goodIn.value, ...extra }); say(r.ok, r.ok ? t('common.saved') : fmtErrors(r.errors)); return r; };
     const epFields = w.kind === 'endpoint' ? endpointForm(w, () => route()) : null;
+    const pool = (w.pool || []).map(p => ({ model: p.model, weight: p.weight, prev: p.weight || 10 })), poolBox = h('div', { class: 'pool' });
+    const used = {}; for (const r of mine) used[r.model] = (used[r.model] || 0) + 1;
+    const poolIn = h('input', { type: 'text', list: dl, placeholder: t('wk.poolNew'), autocomplete: 'off', spellcheck: 'false', 'aria-label': t('wk.poolNew'), style: 'width:220px' });
+    const poolAdd = () => { const m = poolIn.value.trim(); if (!m || pool.some(p => p.model === m)) return; pool.push({ model: m, weight: 10, prev: 10 }); poolIn.value = ''; drawPool(); };
+    const poolSave = async () => { const r = await post('/api/workers/save', { id: w.id, pool: pool.map(p => ({ model: p.model, weight: p.weight })) }); say(r.ok, r.ok ? t('common.saved') : fmtErrors(r.errors)); if (r.ok) route(); };
+    const drawPool = () => {
+      const upds = [], refresh = () => { const tot = pool.reduce((a, p) => a + (p.weight > 0 ? p.weight : 0), 0); upds.forEach(u => u(tot)); };
+      const rows = pool.map(p => {
+        const sw = h('input', { type: 'checkbox', checked: p.weight > 0, 'aria-label': t('wk.poolOn'), onchange: e => { p.weight = e.target.checked ? p.prev || 10 : 0; num.value = p.weight; refresh(); } });
+        const num = h('input', { type: 'number', min: 0, max: 100, step: 1, value: p.weight, style: 'width:70px;flex:none', 'aria-label': t('wk.poolWeight'), oninput: e => { p.weight = Math.max(0, Math.min(100, Math.round(+e.target.value) || 0)); if (p.weight > 0) p.prev = p.weight; refresh(); } });
+        const share = h('span', { class: 'note' }), actual = h('span', { class: 'note' }, `${t('wk.poolActual')}: ${mine.length ? pct((used[p.model] || 0) / mine.length) : '–'}`);
+        upds.push(tot => { sw.checked = p.weight > 0; share.textContent = p.weight > 0 && tot ? `${pct(p.weight / tot)} ${t('wk.poolShare')}` : '–'; });
+        return h('div', { class: 'line' }, h('span', { class: 'mono' }, p.model),
+          h('label', { class: 'switch', title: t('wk.poolOn') }, sw, h('span', {})), num, share, actual,
+          h('button', { type: 'button', class: 'btn', 'aria-label': t('wk.poolRemove'), title: t('wk.poolRemove'), onclick: () => { pool.splice(pool.indexOf(p), 1); drawPool(); } }, '×'));
+      });
+      poolBox.replaceChildren(...rows);
+      refresh();
+    };
+    drawPool();
     return h('section', { class: 'card wcard' + (w.enabled && w.available ? '' : ' dim') },
       h('div', { class: 'top' },
         h('div', { class: 'av', style: `background:${(WK[w.id] || {}).color || 'var(--sx)'}`, 'aria-hidden': 'true' }, w.label[0]),
         h('div', { class: 'grow' }, h('b', {}, w.label, ' ', h('span', { class: 'pill tiny' }, t('wk.kind.' + w.kind))), h('div', { class: 'note' }, w.via, w.version ? ` · ${w.version}` : '')),
-        h('span', { class: 'pill st' }, h('span', { class: 'dot ' + dotOf(w) }), stateOf(w)),
+        h('span', { class: 'pill box st' }, h('span', { class: 'dot ' + dotOf(w) }), stateOf(w)),
         h('label', { class: 'switch', title: t('wk.enabled') }, h('input', { type: 'checkbox', checked: w.enabled, 'aria-label': t('wk.enabled'), onchange: async e => { const r = await save({ enabled: e.target.checked }); if (r.ok) route(); } }), h('span', {}))),
       h('datalist', { id: dl }),
       h('div', { class: 'form compact' },
         h('label', {}, t('st.model')), h('div', { class: 'row' }, modelIn, w.listsModels ? h('button', { type: 'button', class: 'btn', onclick: loadModels }, t('st.loadModels')) : null),
         h('label', {}, t('wk.goodAt')), goodIn),
+      h('div', { class: 'pool-wrap' }, h('b', {}, t('wk.pool')), h('div', { class: 'note' }, t('wk.poolHint')), poolBox,
+        h('div', { class: 'line' }, poolIn, h('button', { type: 'button', class: 'btn', onclick: poolAdd }, t('wk.poolAdd')), h('button', { type: 'button', class: 'btn', onclick: poolSave }, t('wk.poolSave')))),
       epFields,
       w.notes ? h('div', { class: 'note' }, w.notes) : null,
       !w.available && w.install ? h('div', { class: 'note' }, t('wk.install') + ': ', h('code', { class: 'mono' }, w.install)) : null,
@@ -429,32 +512,41 @@ function confirmDelete(id) {
 }
 
 async function pageTasks() {
-  const [{ runs }] = await Promise.all([api('/api/runs?limit=5000'), loadWorkers()]);
-  const box = h('div', {});
+  const seq = routeSeq;
+  const [{ runs, active = [] }] = await Promise.all([api('/api/runs?limit=5000'), loadWorkers()]);
+  if (seq !== routeSeq) return;
+  const box = h('div', {}), since = state.taskDays ? Date.now() / 1000 - state.taskDays * 86400 : 0;
+  // older records without task text only show under "All"
+  const inRange = runs.filter(r => state.taskDays ? !r.legacy && r.t >= since : true);
   const draw = () => {
     const q = state.taskQuery.toLowerCase();
-    const rows = runs.filter(r => (!state.taskWorker || r.worker === state.taskWorker) &&
+    const rows = inRange.filter(r => (!state.taskWorker || r.worker === state.taskWorker) &&
       (!state.taskStatus || (state.taskStatus === 'ok' ? r.rc === 0 : r.rc !== 0)) &&
       (!q || `${r.task} ${r.report} ${r.project} ${r.model}`.toLowerCase().includes(q)));
     box.replaceChildren(table([
-      { key: 't', label: t('col.time'), fmt: v => dt(v) },
+      { key: 't', label: t('col.time'), fmt: v => h('span', { class: 'nw' }, dt(v)) },
       { key: 'worker', label: t('col.worker'), fmt: v => wpill(v) },
-      { key: 'model', label: t('col.model'), fmt: v => h('span', { class: 'mono' }, v || '–') },
-      { key: 'project', label: t('col.project'), fmt: v => v || '–' },
+      { key: 'model', label: t('col.model'), fmt: v => h('span', { class: 'mono nw' }, v || '–') },
+      { key: 'project', label: t('col.project'), fmt: v => h('span', { class: 'nw' }, v || '–') },
       { key: 'task', label: t('col.task'), nosort: true, fmt: (v, r) => h('div', { class: 'clamp' }, v || (r.legacy ? t('tk.legacy') : '–')) },
       { key: 'rc', label: t('col.status'), fmt: (_, r) => status(r) },
-      { key: 'secs', label: t('col.duration'), num: true, fmt: dur },
-    ], rows, { sort: 't', onRow: openRun, empty: runs.length ? t('tk.empty') : t('ov.noTasks') }));
+      { key: 'secs', label: t('col.duration'), num: true, fmt: v => h('span', { class: 'nw' }, dur(v)) },
+    ], rows, { sort: 't', onRow: openRun, empty: inRange.length ? t('tk.empty') : runs.length ? h('span', {}, t('tk.emptyRange'), ' ', h('button', { class: 'btn', onclick: () => { state.taskDays = 0; route(); } }, t('tk.showAll'))) : t('ov.noTasks') }));
   };
   const wsel = h('select', { 'aria-label': t('col.worker'), onchange: e => { state.taskWorker = e.target.value; draw(); } }, h('option', { value: '' }, t('tk.allWorkers')), WK_ORDER.map(id => h('option', { value: id, selected: state.taskWorker === id ? true : null }, WK[id].label)));
   const ssel = h('select', { 'aria-label': t('col.status'), onchange: e => { state.taskStatus = e.target.value; draw(); } }, h('option', { value: '' }, t('tk.allStatus')), h('option', { value: 'ok', selected: state.taskStatus === 'ok' ? true : null }, t('tk.ok')), h('option', { value: 'fail', selected: state.taskStatus === 'fail' ? true : null }, t('tk.fail')));
   const search = h('input', { type: 'search', placeholder: t('tk.search'), value: state.taskQuery, 'aria-label': t('tk.search'), oninput: e => { state.taskQuery = e.target.value; draw(); } });
-  main.replaceChildren(h('div', {}, pageHead(t('tk.title'), t('tk.sub', { n: NF.format(runs.length) }), search, wsel, ssel), h('section', { class: 'card' }, box)));
+  main.replaceChildren(h('div', {},
+    pageHead(t('tk.title'), t('tk.subRange', { n: NF.format(inRange.length), total: NF.format(runs.length) }), seg(RANGES(), state.taskDays, v => { state.taskDays = v; route(); }), search, wsel, ssel),
+    nowCard(active),
+    h('section', { class: 'card' }, box)));
   draw();
 }
 
 async function pageOffice() {
+  const seq = routeSeq;
   let st = await api('/api/office');
+  if (seq !== routeSeq) return;
   const frameBox = h('div', { class: 'office' });
   const info = h('div', { class: 'bar' });
   const paint = () => {
@@ -478,8 +570,65 @@ async function pageOffice() {
   if (st.installed && !st.running) act('start'); // opening the page is the "click to run"
 }
 
+// Claude accounts: rotate between subscriptions when one hits its limit (lib/accounts.js).
+function accountsCard(c, save, msg, say) {
+  const aMsg = msg();
+  const body = h('div', {}, h('div', { class: 'note' }, t('common.loading')));
+  const when = ms => {
+    if (!ms) return '–';
+    const d = new Date(ms), today = new Date().toDateString() === d.toDateString();
+    return d.toLocaleString(LOCALE, today ? { hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  };
+  const win = (w, thr) => {
+    if (!w || typeof w.pct !== 'number') return h('span', { class: 'note' }, '–');
+    const pct = Math.max(0, Math.min(100, w.pct));
+    return h('div', {}, h('span', {}, `${Math.round(w.pct)}%`), ' ', h('span', { class: 'note' }, t('ac.resets', { t: when(w.resetsAt) })),
+      h('div', { class: 'meter' + (w.pct >= thr ? ' over' : '') }, h('i', { style: `width:${pct}%` })));
+  };
+  const paint = st => {
+    if (!st.accounts.length) {
+      body.replaceChildren(h('div', { class: 'note' }, t('ac.empty')),
+        h('pre', { class: 'mono out' }, 'claude-account add main\nclaude-account login second'));
+      return;
+    }
+    const rows = st.accounts.map(a => h('tr', {},
+      h('td', {}, a.active ? h('b', {}, '● ' + a.name) : a.name, h('div', { class: 'note' }, a.email || '')),
+      h('td', {}, win(a.usage && a.usage.five_hour, st.threshold)),
+      h('td', {}, win(a.usage && a.usage.seven_day, st.threshold)),
+      h('td', {}, a.blockedUntil ? h('span', { class: 'msg-err' }, t('ac.limited', { t: when(a.blockedUntil) })) : h('span', { class: 'ok' }, t('ac.free')),
+        a.lastError ? h('div', { class: 'note' }, a.lastError) : null),
+      h('td', {}, a.active ? h('span', { class: 'note' }, t('ac.active')) : h('button', { class: 'btn', onclick: async e => {
+        e.target.disabled = true;
+        const r = await post('/api/accounts/use', { name: a.name });
+        say(aMsg, r.ok, r.ok ? t('ac.switched', { n: a.name }) : (r.error || t('common.error')));
+        if (r.ok) paint(r);
+        else e.target.disabled = false;
+      } }, t('ac.use')))));
+    const log = st.log.slice(-5).reverse().map(l => h('div', { class: 'note' }, `${when(l.t)} · ${l.from || '?'} → ${l.to} · ${l.reason}`));
+    body.replaceChildren(
+      h('div', { class: 'tw' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, t('ac.account')), h('th', {}, t('ac.h5')), h('th', {}, t('ac.week')), h('th', {}, t('ac.state')), h('th', {}))), h('tbody', {}, rows))),
+      log.length ? h('div', { class: 'mt' }, h('div', { class: 'note' }, h('b', {}, t('ac.log'))), log) : null);
+  };
+  const load = async refresh => {
+    try { paint(await api('/api/accounts' + (refresh ? '?refresh=1' : ''))); }
+    catch (e) { body.replaceChildren(h('div', { class: 'msg-err' }, String(e.message || e))); }
+  };
+  const refreshBtn = h('button', { class: 'btn', onclick: async e => { e.target.disabled = true; aMsg.textContent = t('ac.refreshing'); aMsg.className = 'note'; await load(true); aMsg.textContent = ''; e.target.disabled = false; } }, t('ac.refresh'));
+  const form = h('div', { class: 'form' },
+    h('label', { for: 'acOn' }, t('ac.auto')),
+    h('div', {}, h('label', { class: 'switch' }, h('input', { id: 'acOn', type: 'checkbox', checked: (c.CONDUCTOR_ACCOUNTS || '1') === '1', onchange: e => save({ conductor: { CONDUCTOR_ACCOUNTS: e.target.checked ? '1' : '0' } }, aMsg) }), h('span', {}))),
+    h('div', { class: 'hint' }, t('ac.autoHint')),
+    h('label', { for: 'acThr' }, t('ac.threshold')),
+    h('input', { id: 'acThr', type: 'number', min: 50, max: 100, value: c.CONDUCTOR_ACCOUNT_THRESHOLD, placeholder: '98', onchange: e => save({ conductor: { CONDUCTOR_ACCOUNT_THRESHOLD: e.target.value.trim() } }, aMsg) }),
+    h('div', { class: 'hint' }, t('ac.thresholdHint')));
+  load(false);
+  return card2(t('ac.title'), t('ac.sub'), body, form, h('div', { class: 'actions' }, refreshBtn, aMsg));
+}
+
 async function pageSettings() {
+  const seq = routeSeq;
   const [set, hosts] = await Promise.all([api('/api/settings'), api('/api/hosts')]);
+  if (seq !== routeSeq) return;
   const c = set.conductor;
   const msg = () => h('span', { role: 'status' });
   const say = (el, ok, text) => { el.className = ok ? 'msg-ok' : 'msg-err'; el.textContent = text; };
@@ -507,6 +656,12 @@ async function pageSettings() {
   // general
   const gMsg = msg();
   const gForm = h('form', { class: 'form', onsubmit: async e => { e.preventDefault(); await save({ conductor: Object.fromEntries([...new FormData(e.target).entries()]) }, gMsg); } },
+    h('label', { for: 'dg' }, t('st.delegation')), h('select', { id: 'dg', onchange: e => save({ conductor: { CONDUCTOR_DELEGATION: e.target.value } }, gMsg) },
+      ['off', 'light', 'balanced', 'max'].map(v => h('option', { value: v, selected: (c.CONDUCTOR_DELEGATION || 'balanced') === v ? true : null }, t('st.dl.' + v)))),
+    h('div', { class: 'hint' }, t('st.delegationHint')),
+    h('label', { for: 'rp' }, t('st.report')), h('select', { id: 'rp', onchange: e => save({ conductor: { CONDUCTOR_REPORT: e.target.value } }, gMsg) },
+      ['brief', 'full'].map(v => h('option', { value: v, selected: (c.CONDUCTOR_REPORT || 'brief') === v ? true : null }, t('st.rp.' + v)))),
+    h('div', { class: 'hint' }, t('st.reportHint')),
     h('label', { for: 'to' }, t('st.timeout')), h('input', { id: 'to', type: 'number', name: 'CONDUCTOR_TIMEOUT', value: c.CONDUCTOR_TIMEOUT, placeholder: '900', min: 30, max: 7200 }),
     h('label', { for: 'ml' }, t('st.maxLines')), h('input', { id: 'ml', type: 'number', name: 'CONDUCTOR_MAX_LINES', value: c.CONDUCTOR_MAX_LINES, placeholder: '60', min: 10, max: 500 }),
     h('div', { class: 'hint' }, t('st.maxLinesHint')));
@@ -537,7 +692,7 @@ async function pageSettings() {
   const pTable = h('table', { class: 'ptable' },
     h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, t('col.model')), h('th', { class: 'n', scope: 'col' }, t('st.pIn')), h('th', { class: 'n', scope: 'col' }, t('st.pOut')), h('th', { class: 'n', scope: 'col' }, t('st.pCr')))),
     h('tbody', {}, allModels.map(m => h('tr', { 'data-model': m },
-      h('td', {}, h('span', { class: 'pill' }, h('i', { class: 'sw', style: `background:${modelColor(m)}` }), modelName(m)), set.pricing.overrides[m] ? h('span', { class: 'note' }, t('st.custom')) : null),
+      h('td', {}, h('span', { class: 'pill' }, h('i', { class: 'sw', style: `background:${modelColor(m)}` }), modelName(m)), ' ', set.pricing.overrides[m] ? h('span', { class: 'note' }, t('st.custom')) : null),
       ['in', 'out', 'cr'].map(k => h('td', { class: 'n' }, h('input', { type: 'number', step: '0.001', min: 0, 'data-k': k, value: eff(m)[k], 'aria-label': `${modelName(m)} ${k}` })))))));
   const newModel = h('input', { type: 'text', placeholder: t('st.newModel'), style: 'width:260px', 'aria-label': t('st.newModel') });
   const savePricing = async () => {
@@ -560,6 +715,7 @@ async function pageSettings() {
   main.replaceChildren(h('div', {},
     pageHead(t('st.title'), t('st.sub')),
     h('div', { class: 'grid' }, orchCard),
+    h('div', { class: 'grid mt' }, accountsCard(c, save, msg, say)),
     h('div', { class: 'grid g2 mt' },
       card2(t('st.general'), t('st.workersLink'), gForm, h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => gForm.requestSubmit() }, t('common.save')), gMsg)),
       card2(t('st.budget'), t('st.budgetSub'), bForm, h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => bForm.requestSubmit() }, t('common.save')), bMsg))),
@@ -578,13 +734,14 @@ let routeSeq = 0;
 async function route() {
   const page = (location.hash.match(/^#\/(\w+)/) || [])[1] || 'overview';
   const fn = PAGES[page] || pageOverview;
-  document.querySelectorAll('.side a[data-page]').forEach(a => { const on = a.dataset.page === page; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  document.querySelectorAll('.nav a[data-page]').forEach(a => { const on = a.dataset.page === page; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   const seq = ++routeSeq;
   hideTip();
-  if (main.dataset.page !== page) main.replaceChildren(h('div', { class: 'empty' }, t('common.loading')));
+  const same = main.dataset.page === page, y = scrollY;
+  if (!same) { main.replaceChildren(h('div', { class: 'empty' }, t('common.loading'))); scrollTo(0, 0); }
   main.dataset.page = page;
   document.title = `${t('nav.' + page)} · Conductor`;
-  try { await fn(); } catch (e) { if (seq === routeSeq) main.replaceChildren(h('section', { class: 'card' }, h('h2', {}, t('common.error')), h('pre', { class: 'mono' }, String(e.message || e)))); }
+  try { await fn(); if (same && seq === routeSeq) scrollTo(0, y); } catch (e) { if (seq === routeSeq) main.replaceChildren(h('section', { class: 'card' }, h('h2', {}, t('common.error')), h('pre', { class: 'mono' }, String(e.message || e)))); }
 }
 function setIdx(ix) {
   if (!ix) return;
@@ -611,5 +768,26 @@ document.querySelectorAll('[data-theme-set]').forEach(b => b.addEventListener('c
 addEventListener('hashchange', route);
 const refreshIdx = () => api('/api/usage?days=1').then(u => setIdx(u.indexing)).catch(() => {});
 refreshIdx(); setInterval(refreshIdx, 60000);
-setInterval(() => { if (['overview', 'tasks', 'workers'].includes(main.dataset.page) && !dlg.open && document.visibilityState === 'visible') route(); }, 60000);
+const editing = () => document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
+setInterval(() => { if (main.dataset.page === 'overview' && !dlg.open && !editing() && document.visibilityState === 'visible') route(); }, 60000);
+// Live state: the running tasks in the top bar, a refresh of Overview and Tasks when a task starts or ends,
+// and a reload when the server was updated underneath this tab. Pages with forms are never re-rendered from here.
+let liveSig = null, serverVersion = null;
+async function pollLive() {
+  if (document.visibilityState !== 'visible') return;
+  let l;
+  try { l = await api('/api/live'); } catch { return; }
+  if (serverVersion && l.version !== serverVersion) return location.reload();
+  serverVersion = l.version;
+  $('#live').replaceChildren(h('i', { class: 'pulse' + (l.active.length ? '' : ' idle'), 'aria-hidden': 'true' }),
+    l.active.length ? t('live.running', { n: NF.format(l.active.length) }) : h('span', { class: 'long' }, l.lastT ? t('live.idle', { ago: rel(l.lastT) }) : t('live.none')));
+  const sig = l.active.map(r => r.id).join() + '|' + l.lastId;
+  const stale = liveSig !== null && sig !== liveSig && ['overview', 'tasks'].includes(main.dataset.page);
+  if (stale && (dlg.open || editing())) return; // try again on the next tick
+  liveSig = sig;
+  if (stale) route();
+}
+pollLive(); setInterval(pollLive, 4000);
+document.addEventListener('visibilitychange', pollLive);
+setInterval(() => document.querySelectorAll('.elapsed').forEach(el => { el.textContent = dur(Date.now() / 1000 - +el.dataset.t); }), 1000);
 route();
