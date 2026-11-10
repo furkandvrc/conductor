@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0
+
+### Added
+
+- **Claude account rotation goes back to the main account.** When conductor has moved to a spare
+  account and the main one has room again (its 5-hour or weekly window reset), it switches back
+  at the next check instead of staying on the spare until that one runs out too. The main account
+  is the first one saved; change it with `claude-account primary <name>` or the dashboard's
+  "Make main" button. When the main account is free it is also the first choice whenever the
+  active one hits its limit. An account picked by hand (`claude-account use`, the dashboard) is
+  kept until it reaches its own limit. `CONDUCTOR_ACCOUNT_RETURN=0` (dashboard: "Go back to the
+  main account") keeps the old behaviour.
+
 ## 0.6.1
 
 ### Fixed

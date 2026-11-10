@@ -591,8 +591,15 @@ function accountsCard(c, save, msg, say) {
         h('pre', { class: 'mono out' }, 'claude-account add main\nclaude-account login second'));
       return;
     }
+    const makeMain = a => st.accounts.length < 2 || a.primary ? null : h('button', { class: 'btn', onclick: async e => {
+      e.target.disabled = true;
+      const r = await post('/api/accounts/primary', { name: a.name });
+      say(aMsg, r.ok, r.ok ? t('ac.mainSet', { n: a.name }) : (r.error || t('common.error')));
+      if (r.ok) paint(r);
+      else e.target.disabled = false;
+    } }, t('ac.makeMain'));
     const rows = st.accounts.map(a => h('tr', {},
-      h('td', {}, a.active ? h('b', {}, '● ' + a.name) : a.name, h('div', { class: 'note' }, a.email || '')),
+      h('td', {}, a.active ? h('b', {}, '● ' + a.name) : a.name, a.primary && st.accounts.length > 1 ? [' ', h('span', { class: 'pill tiny' }, t('ac.main'))] : null, h('div', { class: 'note' }, a.email || '')),
       h('td', {}, win(a.usage && a.usage.five_hour, st.threshold)),
       h('td', {}, win(a.usage && a.usage.seven_day, st.threshold)),
       h('td', {}, a.blockedUntil ? h('span', { class: 'msg-err' }, t('ac.limited', { t: when(a.blockedUntil) })) : h('span', { class: 'ok' }, t('ac.free')),
@@ -603,7 +610,7 @@ function accountsCard(c, save, msg, say) {
         say(aMsg, r.ok, r.ok ? t('ac.switched', { n: a.name }) : (r.error || t('common.error')));
         if (r.ok) paint(r);
         else e.target.disabled = false;
-      } }, t('ac.use')))));
+      } }, t('ac.use')), ' ', makeMain(a))));
     const log = st.log.slice(-5).reverse().map(l => h('div', { class: 'note' }, `${when(l.t)} · ${l.from || '?'} → ${l.to} · ${l.reason}`));
     body.replaceChildren(
       h('div', { class: 'tw' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, t('ac.account')), h('th', {}, t('ac.h5')), h('th', {}, t('ac.week')), h('th', {}, t('ac.state')), h('th', {}))), h('tbody', {}, rows))),
@@ -618,6 +625,9 @@ function accountsCard(c, save, msg, say) {
     h('label', { for: 'acOn' }, t('ac.auto')),
     h('div', {}, h('label', { class: 'switch' }, h('input', { id: 'acOn', type: 'checkbox', checked: (c.CONDUCTOR_ACCOUNTS || '1') === '1', onchange: e => save({ conductor: { CONDUCTOR_ACCOUNTS: e.target.checked ? '1' : '0' } }, aMsg) }), h('span', {}))),
     h('div', { class: 'hint' }, t('ac.autoHint')),
+    h('label', { for: 'acRet' }, t('ac.return')),
+    h('div', {}, h('label', { class: 'switch' }, h('input', { id: 'acRet', type: 'checkbox', checked: (c.CONDUCTOR_ACCOUNT_RETURN || '1') === '1', onchange: e => save({ conductor: { CONDUCTOR_ACCOUNT_RETURN: e.target.checked ? '1' : '0' } }, aMsg) }), h('span', {}))),
+    h('div', { class: 'hint' }, t('ac.returnHint')),
     h('label', { for: 'acThr' }, t('ac.threshold')),
     h('input', { id: 'acThr', type: 'number', min: 50, max: 100, value: c.CONDUCTOR_ACCOUNT_THRESHOLD, placeholder: '98', onchange: e => save({ conductor: { CONDUCTOR_ACCOUNT_THRESHOLD: e.target.value.trim() } }, aMsg) }),
     h('div', { class: 'hint' }, t('ac.thresholdHint')));

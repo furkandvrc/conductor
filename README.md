@@ -167,8 +167,9 @@ claude-account use second        # switch by hand
 ```
 
 After that it is automatic: a background hook checks the active account's usage every few
-minutes and switches before it runs out, and a rate-limit error switches at once. A desktop
-notification tells you. Only the Claude sign-in changes: MCP server sign-ins, settings, plugins,
+minutes and switches before it runs out, and a rate-limit error switches at once. As soon as
+the main account (the first one saved; `claude-account primary <name>` to change it) has room
+again, it switches back to it. A desktop notification tells you. Only the Claude sign-in changes: MCP server sign-ins, settings, plugins,
 history and memory stay the same. New sessions and `delegate` runs use the new account straight
 away; a session that was already running picks it up at its next token refresh, or with `/exit`
 and `claude --continue`. Saved sign-ins live in the macOS Keychain (elsewhere in
@@ -180,7 +181,7 @@ Everything can be set from the dashboard. These are the underlying files:
 
 | Path | Contents |
 |---|---|
-| `~/.config/conductor/conductor.env` | `CONDUCTOR_ORCHESTRATOR` (auto, claude, codex…), `CONDUCTOR_DELEGATION` (off, light, balanced, max), `CONDUCTOR_REPORT` (brief, full), `CONDUCTOR_TIMEOUT`, `CONDUCTOR_MAX_LINES`, `CONDUCTOR_PIXEL`, `CONDUCTOR_PANEL_AUTOSTART`, `CONDUCTOR_OFFICE_AUTOSTART`, `CONDUCTOR_OFFICE_HIDE`, `CONDUCTOR_BUDGET_DAILY` / `_MONTHLY`, `CONDUCTOR_ACCOUNTS`, `CONDUCTOR_ACCOUNT_THRESHOLD`, `CONDUCTOR_ACCOUNT_POLL` |
+| `~/.config/conductor/conductor.env` | `CONDUCTOR_ORCHESTRATOR` (auto, claude, codex…), `CONDUCTOR_DELEGATION` (off, light, balanced, max), `CONDUCTOR_REPORT` (brief, full), `CONDUCTOR_TIMEOUT`, `CONDUCTOR_MAX_LINES`, `CONDUCTOR_PIXEL`, `CONDUCTOR_PANEL_AUTOSTART`, `CONDUCTOR_OFFICE_AUTOSTART`, `CONDUCTOR_OFFICE_HIDE`, `CONDUCTOR_BUDGET_DAILY` / `_MONTHLY`, `CONDUCTOR_ACCOUNTS`, `CONDUCTOR_ACCOUNT_THRESHOLD`, `CONDUCTOR_ACCOUNT_RETURN`, `CONDUCTOR_ACCOUNT_POLL` |
 | `~/.config/conductor/workers.json` | per-worker `enabled` / `model` / `goodAt` / `pool` (`[{ model, weight }]`), plus `custom` CLI definitions |
 | `~/.config/conductor/endpoints.json` | OpenAI-compatible endpoints with their secrets (mode 600); a 0.2 `local.env` is migrated automatically |
 | `~/.config/conductor/pricing.json` | price overrides per model |

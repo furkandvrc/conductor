@@ -9,7 +9,7 @@
       "name": "conductor",
       "source": "./",
       "description": "Claude orchestrates; cheaper worker models do the volume work. Local usage/cost dashboard.",
-      "version": "0.6.1"
+      "version": "0.7.0"
     }
   ],
   "metadata": {

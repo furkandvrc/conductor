@@ -260,6 +260,12 @@ const POST = {
     try { await accounts().use(name, 'dashboard'); return [200, { ok: true, ...(await accounts().status()) }]; }
     catch (e) { return [400, { ok: false, error: e.message }]; }
   },
+  '/api/accounts/primary': async b => {
+    const name = String(b.name || '');
+    if (!ACC.NAME_RE.test(name)) return [400, { ok: false, error: 'bad name' }];
+    try { accounts().setPrimary(name); return [200, { ok: true, ...(await accounts().status()) }]; }
+    catch (e) { return [400, { ok: false, error: e.message }]; }
+  },
 };
 
 const server = http.createServer(async (req, res) => {

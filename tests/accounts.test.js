@@ -41,7 +41,7 @@ function fakeApi(usage) {
 }
 const win = (pct, resetsInH) => ({ utilization: pct, resets_at: new Date(T0 + resetsInH * H).toISOString() });
 
-function setup(usage) {
+function setup(usage, env = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'conductor-acc-'));
   const P = { stateDir: dir, state: path.join(dir, 'accounts.json'), profiles: path.join(dir, 'p'), globalConfig: path.join(dir, '.claude.json'), credFile: path.join(dir, 'cred.json') };
   const global = { theme: 'dark', projects: { a: 1 }, oauthAccount: { accountUuid: 'uuid-a', emailAddress: 'a@x.test' } };
@@ -49,8 +49,8 @@ function setup(usage) {
   const store = memStore({ claudeAiOauth: tok('a'), mcpOAuth: { figma: { token: 'keep-me' } } });
   let t = T0;
   const api = fakeApi(usage);
-  const m = createManager({ env: {}, paths: P, store, apiGet: api, now: () => t });
-  return { m, store, P, api, setNow: v => { t = v; } };
+  const m = createManager({ env, paths: P, store, apiGet: api, now: () => t });
+  return { m, store, P, api, usage, setNow: v => { t = v; } };
 }
 
 test('parseUsage reads both windows as percent with reset times', () => {
@@ -158,4 +158,65 @@ test('add refuses the same account under a second name', async () => {
   await m.add('a');
   await assert.rejects(m.add('other'), /already saved as "a"/);
   await assert.rejects(m.add('Bad Name'), /account name/);
+});
+
+// a is the main account (first saved); b is the spare one
+async function twoAccounts(usage, env) {
+  const ctx = setup(usage, env);
+  await ctx.m.add('a');
+  ctx.store.writeProfile('b', { claudeAiOauth: tok('b') });
+  const s = ctx.m._load();
+  s.accounts.push({ name: 'b', uuid: 'uuid-b', email: 'b@x.test', oauthAccount: { accountUuid: 'uuid-b', emailAddress: 'b@x.test' } });
+  fs.writeFileSync(ctx.P.state, JSON.stringify(s));
+  return ctx;
+}
+
+test('pickNext goes to the main account first when it is free', () => {
+  const list = [{ name: 'a' }, { name: 'b' }, { name: 'c' }];
+  assert.strictEqual(pickNext(list, 'b', T0, 98).name, 'c');
+  assert.strictEqual(pickNext(list, 'b', T0, 98, 'a').name, 'a');
+  assert.strictEqual(pickNext(list, 'a', T0, 98, 'a').name, 'b');
+});
+
+test('goes back to the main account as soon as its window resets', async () => {
+  const { m, store, setNow, usage } = await twoAccounts({ a: { five_hour: win(100, 2) }, b: { five_hour: win(10, 3) } });
+  let r = await m.auto({ reason: 'manual' });
+  assert.strictEqual(r.to, 'b');
+  // a's token expired by the time it frees up: its last known reset time decides
+  store.writeProfile('a', { claudeAiOauth: tok('a', T0 + H) });
+  setNow(T0 + H);
+  r = await m.auto({ reason: 'manual' });
+  assert.strictEqual(r.switched, false, 'main is still limited');
+  setNow(T0 + 2 * H + 1);
+  usage.a = {};
+  r = await m.auto({ reason: 'manual' });
+  assert.strictEqual(r.switched, true);
+  assert.strictEqual(r.to, 'a');
+  assert.match(r.message, /back to the main account/);
+  assert.strictEqual(store.current.claudeAiOauth.refreshToken, 'rt-a');
+  assert.strictEqual(m._load().log.at(-1).reason, 'main');
+});
+
+test('a hand-picked account is kept until it hits its own limit', async () => {
+  const { m, store, usage } = await twoAccounts({ a: { five_hour: win(10, 2) }, b: { five_hour: win(10, 3) } });
+  await m.use('b');
+  let r = await m.auto({ reason: 'manual' });
+  assert.strictEqual(r.switched, false);
+  assert.strictEqual(store.current.claudeAiOauth.accessToken, 'at-b');
+  usage.b = { five_hour: win(100, 3) };
+  r = await m.auto({ reason: 'manual' });
+  assert.strictEqual(r.to, 'a');
+});
+
+test('CONDUCTOR_ACCOUNT_RETURN=0 stays on the account it moved to; primary can be changed', async () => {
+  const { m, setNow, usage } = await twoAccounts({ a: { five_hour: win(100, 2) }, b: {} }, { CONDUCTOR_ACCOUNT_RETURN: '0' });
+  assert.strictEqual((await m.auto({ reason: 'manual' })).to, 'b');
+  setNow(T0 + 3 * H);
+  usage.a = {};
+  assert.strictEqual((await m.auto({ reason: 'manual' })).switched, false);
+  m.setPrimary('b');
+  const st = await m.status();
+  assert.strictEqual(st.primary, 'b');
+  assert.deepStrictEqual(st.accounts.map(a => a.primary), [false, true]);
+  assert.throws(() => m.setPrimary('nope'), /no account/);
 });
