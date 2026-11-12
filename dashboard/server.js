@@ -327,3 +327,15 @@ server.listen(PORT, HOST, () => {
   workerInfo().catch(() => {});
 });
 setInterval(() => usage.scan(), 60000).unref();
+// Claude account rotation, checked here too so a limit that resets (early or on time) is noticed
+// without a prompt being sent. auto() throttles itself to CONDUCTOR_ACCOUNT_POLL (default 5 min)
+// across hooks and this timer, and reads usage only (no tokens are spent).
+let accountsBusy = false;
+setInterval(async () => {
+  if (accountsBusy) return;
+  accountsBusy = true;
+  try {
+    const r = await accounts().auto({ reason: 'watch' });
+    if (r.switched) ACC.notify(`${r.message} New sessions use it now; running ones at their next token refresh.`);
+  } catch {} finally { accountsBusy = false; }
+}, 60000).unref();

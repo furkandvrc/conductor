@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- **Early limit resets are noticed, without spending tokens.** Account usage is read from Claude's
+  usage endpoint, which costs nothing. Until now an idle account's usage stopped updating once its
+  sign-in token expired (about 8 hours), so a 5-hour or weekly window that reset early was only
+  noticed at the announced reset time. Conductor now refreshes an idle account's token itself
+  (never the one Claude Code is using) and keeps its usage current, so it goes back to the main
+  account within a few minutes of an early reset. A per-account lock keeps a refresh and a switch
+  to that account from overlapping across hooks, the dashboard and the CLI.
+  `CONDUCTOR_ACCOUNT_REFRESH=0` turns this off.
+- **The check also runs in the background.** The dashboard server runs the rotation check every
+  `CONDUCTOR_ACCOUNT_POLL` seconds (default 300), sharing the prompt hook's throttle, so a reset is
+  picked up even when no prompt is sent; a switch shows a desktop notification.
+
 ## 0.7.0
 
 ### Added

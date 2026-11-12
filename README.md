@@ -166,10 +166,13 @@ claude-account status            # usage of every account, which one is active
 claude-account use second        # switch by hand
 ```
 
-After that it is automatic: a background hook checks the active account's usage every few
-minutes and switches before it runs out, and a rate-limit error switches at once. As soon as
-the main account (the first one saved; `claude-account primary <name>` to change it) has room
-again, it switches back to it. A desktop notification tells you. Only the Claude sign-in changes: MCP server sign-ins, settings, plugins,
+After that it is automatic: every few minutes (`CONDUCTOR_ACCOUNT_POLL`, default 300 s) a hook
+on your prompts and the dashboard server in the background read each account's usage, and switch
+before the active one runs out; a rate-limit error switches at once. Reading usage costs no
+tokens. As soon as the main account (the first one saved; `claude-account primary <name>` to
+change it) has room again, it switches back to it, also when its 5-hour or weekly window resets
+earlier than announced: conductor refreshes an idle account's sign-in when it expires so its
+usage stays current (`CONDUCTOR_ACCOUNT_REFRESH=0` turns that off). A desktop notification tells you. Only the Claude sign-in changes: MCP server sign-ins, settings, plugins,
 history and memory stay the same. New sessions and `delegate` runs use the new account straight
 away; a session that was already running picks it up at its next token refresh, or with `/exit`
 and `claude --continue`. Saved sign-ins live in the macOS Keychain (elsewhere in
@@ -181,7 +184,7 @@ Everything can be set from the dashboard. These are the underlying files:
 
 | Path | Contents |
 |---|---|
-| `~/.config/conductor/conductor.env` | `CONDUCTOR_ORCHESTRATOR` (auto, claude, codex…), `CONDUCTOR_DELEGATION` (off, light, balanced, max), `CONDUCTOR_REPORT` (brief, full), `CONDUCTOR_TIMEOUT`, `CONDUCTOR_MAX_LINES`, `CONDUCTOR_PIXEL`, `CONDUCTOR_PANEL_AUTOSTART`, `CONDUCTOR_OFFICE_AUTOSTART`, `CONDUCTOR_OFFICE_HIDE`, `CONDUCTOR_BUDGET_DAILY` / `_MONTHLY`, `CONDUCTOR_ACCOUNTS`, `CONDUCTOR_ACCOUNT_THRESHOLD`, `CONDUCTOR_ACCOUNT_RETURN`, `CONDUCTOR_ACCOUNT_POLL` |
+| `~/.config/conductor/conductor.env` | `CONDUCTOR_ORCHESTRATOR` (auto, claude, codex…), `CONDUCTOR_DELEGATION` (off, light, balanced, max), `CONDUCTOR_REPORT` (brief, full), `CONDUCTOR_TIMEOUT`, `CONDUCTOR_MAX_LINES`, `CONDUCTOR_PIXEL`, `CONDUCTOR_PANEL_AUTOSTART`, `CONDUCTOR_OFFICE_AUTOSTART`, `CONDUCTOR_OFFICE_HIDE`, `CONDUCTOR_BUDGET_DAILY` / `_MONTHLY`, `CONDUCTOR_ACCOUNTS`, `CONDUCTOR_ACCOUNT_THRESHOLD`, `CONDUCTOR_ACCOUNT_RETURN`, `CONDUCTOR_ACCOUNT_POLL`, `CONDUCTOR_ACCOUNT_REFRESH` |
 | `~/.config/conductor/workers.json` | per-worker `enabled` / `model` / `goodAt` / `pool` (`[{ model, weight }]`), plus `custom` CLI definitions |
 | `~/.config/conductor/endpoints.json` | OpenAI-compatible endpoints with their secrets (mode 600); a 0.2 `local.env` is migrated automatically |
 | `~/.config/conductor/pricing.json` | price overrides per model |
