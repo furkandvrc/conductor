@@ -300,3 +300,50 @@ test('CONDUCTOR_ACCOUNT_RETURN=0 stays on the account it moved to; primary can b
   assert.deepStrictEqual(st.accounts.map(a => a.primary), [false, true]);
   assert.throws(() => m.setPrimary('nope'), /no account/);
 });
+
+test('a limit stop from a session still on the old account does not mark the new one', async () => {
+  const { m, setNow, usage } = await twoAccounts({ a: { five_hour: win(100, 2) }, b: { five_hour: win(10, 3) } });
+  assert.strictEqual((await m.auto({ reason: 'manual' })).to, 'b');
+  setNow(T0 + 60e3);
+  let r = await m.auto({ reason: 'rate_limit' });
+  assert.strictEqual(r.switched, false);
+  assert.ok(!m._load().accounts.find(a => a.name === 'b').limitedUntil, 'b had room: not marked');
+  // after the grace period a limit on b is believed even before usage shows it
+  setNow(T0 + 11 * 60e3);
+  usage.b = { five_hour: win(60, 3) };
+  r = await m.auto({ reason: 'rate_limit' });
+  assert.ok(m._load().accounts.find(a => a.name === 'b').limitedUntil > T0 + 11 * 60e3);
+});
+
+test('onLimitStop wakes a stopped session once when the account was switched, never in a loop', async () => {
+  const { m, store, setNow } = await twoAccounts({ a: { five_hour: win(100, 2) }, b: { five_hour: win(10, 3) } });
+  let r = await m.onLimitStop('sess-1');
+  assert.strictEqual(r.resume, true);
+  assert.match(r.message, /switched: a → b/);
+  assert.match(r.wake, /Continue the task from where you left off/);
+  assert.strictEqual(store.current.claudeAiOauth.accessToken, 'at-b');
+  // the woken session stops on a limit again (it was still on a's token): no second wake
+  setNow(T0 + 2 * 60e3);
+  r = await m.onLimitStop('sess-1');
+  assert.strictEqual(r.resume, false);
+  assert.match(r.message, /\/exit, then claude --continue/);
+  // another session that was on a gets its own wake
+  r = await m.onLimitStop('sess-2');
+  assert.strictEqual(r.resume, true);
+  assert.match(r.message, /now b, which has room/);
+  // ten minutes later the first session may be woken again
+  setNow(T0 + 13 * 60e3);
+  assert.strictEqual(m.claimResume('sess-1'), true);
+  assert.strictEqual(m.claimResume(''), false);
+});
+
+test('onLimitStop: no wake when every account is limited or when resuming is off', async () => {
+  const all = await twoAccounts({ a: { five_hour: win(100, 2) }, b: { five_hour: win(100, 4) } });
+  let r = await all.m.onLimitStop('s');
+  assert.strictEqual(r.resume, false);
+  assert.match(r.message, /All Claude accounts are at their limit/);
+  const off = await twoAccounts({ a: { five_hour: win(100, 2) }, b: {} }, { CONDUCTOR_ACCOUNT_RESUME: '0' });
+  r = await off.m.onLimitStop('s');
+  assert.strictEqual(r.resume, false);
+  assert.match(r.message, /switched: a → b.*\/exit, then claude --continue/);
+});

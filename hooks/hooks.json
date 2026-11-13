@@ -27,7 +27,8 @@
         "hooks": [
           {
             "type": "command",
-            "async": true,
+            "asyncRewake": true,
+            "timeout": 120,
             "command": "node \"${CLAUDE_PLUGIN_ROOT}\"/lib/accounts.js hook stop-failure"
           }
         ]

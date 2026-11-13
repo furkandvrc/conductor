@@ -25,6 +25,7 @@ const CONDUCTOR_KEYS = {
   CONDUCTOR_ACCOUNTS: v => v === '' || v === '0' || v === '1',
   CONDUCTOR_ACCOUNT_THRESHOLD: v => v === '' || (/^\d{2,3}$/.test(v) && +v >= 50 && +v <= 100),
   CONDUCTOR_ACCOUNT_RETURN: v => v === '' || v === '0' || v === '1',
+  CONDUCTOR_ACCOUNT_RESUME: v => v === '' || v === '0' || v === '1',
   CONDUCTOR_ACCOUNT_REFRESH: v => v === '' || v === '0' || v === '1',
   CONDUCTOR_ACCOUNT_POLL: v => v === '' || (/^\d+$/.test(v) && +v >= 60 && +v <= 3600),
 };

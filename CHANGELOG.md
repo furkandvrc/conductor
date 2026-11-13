@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- **Stopped work carries on after an account switch.** When a Claude Code turn stops on a usage
+  limit and conductor switches to an account with room, the StopFailure hook (now `asyncRewake`)
+  waits out Claude Code's 30-second credential cache and wakes that session with an instruction
+  to continue from where it left off. Each session is woken at most once per 10 minutes: if it
+  stops on a limit again (it was still on the old account), it is told to `/exit` and
+  `claude --continue` instead, so there is no loop. Other sessions stopped by the same limit are
+  woken too. `CONDUCTOR_ACCOUNT_RESUME=0` turns it off.
+- **`delegate claude` retries after a switch.** A Claude worker that fails with a usage-limit
+  message triggers the rotation; if the account in use then has room, the task runs once more,
+  with a note to check what the first run already changed.
+
+### Fixed
+
+- A limit error from a session still on the previous account no longer marks the account that
+  was just switched to as limited (within 10 minutes of the switch, when its fresh usage shows
+  room).
+
 ## 0.8.0
 
 ### Added
