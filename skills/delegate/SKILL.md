@@ -101,8 +101,14 @@ task, a fast one for a lookup).
   | 2 | usage error or unknown worker |
   | 3 | the worker is disabled, not installed or not configured |
   | 5 | the worker said nothing (for example a tool was denied in headless mode) |
+  | 6 | the worker is out of quota or hit its plan limit: use another worker, do not retry it until it resets |
+  | 7 | the worker is not signed in (or its API key is invalid): ask the user to sign in |
   | 124 | timeout |
   | 130 | interrupted |
+
+  A worker that prints a quota, usage-limit or sign-in error is stopped within seconds instead of
+  running to its timeout, and `delegate list` marks it, so the session-start worker list warns you
+  off it until it resets.
 
 - The full transcript is at the `log=` path on the first output line. Read it only when the
   REPORT is not enough.

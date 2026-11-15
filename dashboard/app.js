@@ -215,7 +215,9 @@ const card = (title, sub, ...body) => h('section', { class: 'card' }, h('h2', {}
 const card2 = card;
 function wpill(id) { const w = WK[id] || { label: id, color: 'var(--sx)' }; return h('span', { class: 'pill' }, h('i', { class: 'sw', style: `background:${w.color}` }), w.label); }
 const elapsed = r => h('span', { class: 'elapsed', 'data-t': r.t }, dur(Date.now() / 1000 - r.t));
-const status = r => r.running ? h('span', { class: 'running' }, t('tk.running')) : r.rc === 0 ? h('span', { class: 'ok' }, t('common.ok')) : h('span', { class: 'fail' }, t('common.fail', { rc: r.rc }));
+// rc 6 / 7: delegate and gen-image stopped on a quota/usage limit or a missing sign-in
+const failText = r => r.rc === 6 || r.reason === 'limit' ? t('common.limit') : r.rc === 7 || r.reason === 'auth' ? t('common.auth') : t('common.fail', { rc: r.rc });
+const status = r => r.running ? h('span', { class: 'running' }, t('tk.running')) : r.rc === 0 ? h('span', { class: 'ok' }, t('common.ok')) : h('span', { class: 'fail', title: t('common.fail', { rc: r.rc }) }, failText(r));
 
 const dlg = $('#dlg');
 $('#dlgClose').addEventListener('click', () => dlg.close());
@@ -278,7 +280,7 @@ function scoreCard(runs, active) {
       const c = (WK[r.worker] || {}).color || 'var(--sx)', name = (WK[r.worker] || {}).label || r.worker;
       return h('button', { class: 'mark' + (r.running ? ' on' : r.rc ? ' bad' : ''), style: `left:${left}%;width:${pos(end) - left}%;--c:${c}`, 'aria-label': `${name}, ${dt(end)}, ${r.running ? t('tk.running') : r.rc ? t('tk.fail') : t('tk.ok')}: ${(r.task || '').slice(0, 80)}`,
         onclick: () => openRun(r), onmouseleave: hideTip,
-        onmousemove: e => showTip(e, `${name}, ${dt(end)}`, [[t('col.status'), c, r.running ? t('tk.running') : r.rc ? t('common.fail', { rc: r.rc }) : t('common.ok')], [t('col.duration'), c, dur(r.running ? now - r.t : r.secs)]], null, r.task) });
+        onmousemove: e => showTip(e, `${name}, ${dt(end)}`, [[t('col.status'), c, r.running ? t('tk.running') : r.rc ? failText(r) : t('common.ok')], [t('col.duration'), c, dur(r.running ? now - r.t : r.secs)]], null, r.task) });
     };
     box.replaceChildren(...real([
       h('div', { class: 'score-head' },

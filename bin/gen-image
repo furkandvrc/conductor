@@ -10,6 +10,7 @@ usage() {
 usage: gen-image "<prompt>" <output.png|.jpg|.webp> [--transparent] [--variants N] [--timeout SEC]
   --transparent  ask for a plain white background and remove it with rembg -> alpha PNG
   --variants N   keep N candidates next to the output as name-2.png, name-3.png (default 1)
+exit codes: 5 no image in time, 6 quota/usage limit, 7 not signed in, 8 the agent ended without an image
 EOF
 }
 [ $# -lt 2 ] && { usage >&2; exit 2; }
@@ -43,12 +44,16 @@ worker=gemini model=image write=1 dir="$PWD" log="" ev_id="$(date +%Y%m%d-%H%M%S
 conductor_event start "[image] $prompt -> ${out#"$PWD"/}"
 on_exit() {
   local rc=$?
+  if [ -n "${apid:-}" ] && kill -0 "$apid" 2>/dev/null; then  # agy and anything it started
+    pkill -TERM -P "$apid" 2>/dev/null; kill "$apid" 2>/dev/null; wait "$apid" 2>/dev/null
+  fi
   rm -rf "$work"
   conductor_event end "${result:-image generation failed (exit $rc)}" "$rc" $(( $(date +%s) - t0 ))
   RUN_TASK="[image] $prompt -> ${out#"$PWD"/}" RUN_REPORT="${result:-image generation failed (exit $rc)}" python3 -I -c 'import json,os,sys,time
 a=sys.argv[1:]
 print(json.dumps({"id":a[0],"t":round(time.time(),3),"worker":"gemini","model":"image","write":1,"secs":int(a[1]),"rc":int(a[2]),
-  "dir":a[3],"project":os.path.basename(a[3].rstrip("/")),"log":"","out_bytes":0,"task":os.environ["RUN_TASK"][:1500],"report":os.environ["RUN_REPORT"][:1500]},ensure_ascii=False))' \
+  "dir":a[3],"project":os.path.basename(a[3].rstrip("/")),"log":"","out_bytes":0,"task":os.environ["RUN_TASK"][:1500],"report":os.environ["RUN_REPORT"][:1500],
+  **({"reason":{6:"limit",7:"auth"}[int(a[2])]} if a[2] in ("6","7") else {})},ensure_ascii=False))' \
     "$ev_id" $(( $(date +%s) - t0 )) "$rc" "$PWD" >>"${CONDUCTOR_HOME:-$HOME/.claude/conductor}/runs.jsonl" 2>/dev/null || true
 }
 trap on_exit EXIT
@@ -56,33 +61,75 @@ bg=""; [ $transparent -eq 1 ] && bg=" Use a plain pure-white background with no 
 ask="Use your image generation tool to create exactly $variants image(s) for this brief, then stop. Do not write code, do not run commands.$bg
 Brief: $prompt"
 
-# Run in an empty scratch dir so the agent cannot touch the project.
-( cd "$work" && agy -p "$ask" --mode accept-edits --output-format stream-json >"$work/events.ndjson" 2>"$work/err.log" )
-conv="$(python3 -I -c 'import json,sys
+# Run in an empty scratch dir so the agent cannot touch the project. agy runs in the background:
+# with no print timeout it can sit on a quota error for minutes, so we watch it instead of waiting.
+( cd "$work" && exec agy -p "$ask" --mode accept-edits --output-format stream-json >"$work/events.ndjson" 2>"$work/err.log" ) &
+apid=$!
+status_py="$here/scripts/agy_status.py"
+fail() {  # code message: say why at once instead of waiting out the timeout
+  result="image generation failed: $2"
+  echo "gen-image: $2" >&2
+  exit "$1"
+}
+conv=""; dirc=""; deadline=$(( $(date +%s) + timeout_s )); last=""; stable=0; done_since=0
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  if [ -z "$conv" ]; then
+    conv="$(python3 -I -c 'import json,sys
 for line in open(sys.argv[1]):
     try: e=json.loads(line)
     except Exception: continue
     c=e.get("conversation_id") or (e.get(e.get("event","")) or {}).get("conversation_id")
-    if c: print(c); break' "$work/events.ndjson")"
-[ -z "$conv" ] && { echo "gen-image: no conversation id from agy"; tail -n 20 "$work/err.log"; exit 4; } >&2
-
-dirc="$BRAIN/$conv"
-deadline=$(( $(date +%s) + timeout_s )); last=""; stable=0
-while [ "$(date +%s)" -lt "$deadline" ]; do
-  # name + size of every image so far (portable: no BSD/GNU stat differences)
-  cur="$(python3 -I -c 'import os,sys
+    if c: print(c); break' "$work/events.ndjson" 2>/dev/null)"
+    [ -n "$conv" ] && dirc="$BRAIN/$conv"
+  fi
+  st=""; cur=""; n=0
+  if [ -n "$conv" ]; then
+    # name + size of every image so far (portable: no BSD/GNU stat differences)
+    cur="$(python3 -I -c 'import os,sys
 d=sys.argv[1]
 try: names=sorted(n for n in os.listdir(d) if n.lower().endswith((".png",".jpg",".jpeg",".webp")))
 except OSError: names=[]
 for n in names: print(os.path.getsize(os.path.join(d,n)), n)' "$dirc")"
-  n=$(printf '%s' "$cur" | grep -c . || true)
+    n=$(printf '%s' "$cur" | grep -c . || true)
+  fi
+  # quota, sign-in or a refusal shows up in agy's transcripts long before any timeout
+  [ -r "$status_py" ] && st="$(python3 -I "$status_py" "$work" "$BRAIN" "$conv" 2>/dev/null)"
+  case "$st" in
+    FATAL*)
+      # keep what was already made (say 1 of 3 variants before the quota ran out)
+      # (once their sizes have held for one poll, so a file still being written is not cut short)
+      if [ "$n" -gt 0 ]; then
+        [ "$cur" = "$last" ] && { echo "gen-image: stopped early, keeping $n image(s): ${st#*$'\t'}" >&2; break; }
+        last="$cur"; sleep 3; continue
+      fi
+      case "$st" in
+        "FATAL limit"*) fail 6 "Antigravity quota/usage limit — ${st#*$'\t'} (do not retry until it resets)" ;;
+        *)              fail 7 "Antigravity sign-in problem — ${st#*$'\t'} (run \`agy\` once to sign in)" ;;
+      esac ;;
+  esac
+  if [ -z "$conv" ]; then
+    if ! kill -0 "$apid" 2>/dev/null; then
+      wait "$apid"; arc=$?
+      fail 4 "no conversation id from agy (exit $arc): $(tail -n 5 "$work/err.log" | tr '\n' ' ' | cut -c1-400)"
+    fi
+    sleep 1; continue
+  fi
   if [ "$n" -ge "$variants" ] && [ "$cur" = "$last" ]; then stable=$((stable+1)); else stable=0; fi
   [ "$n" -gt 0 ] && [ $stable -ge 2 ] && break
+  # the agent ended its turn: with no image at all (a refused prompt, a tool error) give a late
+  # file 10 s, then report what it said; with fewer variants than asked, wait 20 s for more
+  case "$st" in
+    DONE*) [ $done_since -eq 0 ] && done_since=$(date +%s)
+           waited=$(( $(date +%s) - done_since ))
+           [ "$n" -eq 0 ] && [ $waited -ge 10 ] && fail 8 "the agent finished without an image: ${st#*$'\t'}"
+           [ "$n" -gt 0 ] && [ "$cur" = "$last" ] && [ $waited -ge 20 ] && break ;;
+    *) done_since=0 ;;
+  esac
   last="$cur"; sleep 3
 done
 files=()  # no mapfile: macOS ships bash 3.2
 while IFS= read -r f; do files+=("$f"); done < <(find "$dirc" -maxdepth 1 -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) 2>/dev/null | sort)
-[ ${#files[@]} -eq 0 ] && { echo "gen-image: no image appeared in $dirc within ${timeout_s}s" >&2; exit 5; }
+[ ${#files[@]} -eq 0 ] && fail 5 "no image appeared in ${dirc:-the agy conversation} within ${timeout_s}s"
 
 fmt="$ext"; [ "$fmt" = jpg ] && fmt=jpeg
 emit() {  # src dst

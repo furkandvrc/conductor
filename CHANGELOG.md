@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.10.0
+
+### Fixed
+
+- **gen-image reports a quota error at once instead of timing out.** Antigravity's image subagent
+  writes a 429 / RESOURCE_EXHAUSTED error only to its conversation transcript; gen-image waited
+  for an image file that could not appear and gave up after 300–600 s with "no image appeared".
+  It now runs `agy` in the background and reads the transcripts while it waits
+  (`scripts/agy_status.py`): a quota or usage limit exits with code 6 and the reset time, a
+  missing sign-in with 7, and an agent that ended its turn with no image (a refused prompt) with
+  8 and the agent's own words, within seconds. Images made before a limit hit are kept. `agy`
+  no longer outlives the script.
+- **Every worker stops early on a quota, usage-limit or sign-in error.** `delegate` watches each
+  CLI's output for its own error lines (agy's `AGY_ERROR … RESOURCE_EXHAUSTED`, Codex's and
+  Claude Code's "You've hit your … limit", Gemini CLI's "Quota exceeded", "not logged in", an
+  invalid key), gives the CLI 10 seconds to exit, then stops it: a Gemini worker that sat on a
+  429 until its 600 s timeout now fails in about 10 s. Only lines that start like an error count,
+  so a worker reading or quoting code about rate limits is not stopped. Endpoints map HTTP
+  429/402 and 401/403 the same way.
+- **The failure says why.** Exit code 6 (limit) or 7 (sign-in), a one-line reason and what to do
+  next are printed above the stderr tail and stored as `reason` in the run log. `delegate list`,
+  and so the session-start worker list, warns that a worker hit its limit or is not signed in
+  instead of a bare "last run failed (exit 1)". The dashboard shows "Usage limit" / "Not signed
+  in" instead of "Failed (1)".
+
 ## 0.9.0
 
 ### Added

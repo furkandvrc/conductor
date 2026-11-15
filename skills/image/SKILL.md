@@ -29,6 +29,15 @@ gen-image "<prompt>" <path/to/out.png> [--transparent] [--variants N] [--timeout
 3. **Look at the image yourself before reporting.** If it is off, regenerate with a sharper
    prompt. Resize when the project needs a specific size: `sips -Z <px>` on macOS, or
    `magick in.png -resize <px> out.png` elsewhere.
-4. **If it fails** with "no image appeared", rerun once with a longer `--timeout`; Antigravity's
-   image subagent sometimes queues. If `agy` is missing, say so; do not fall back to drawing images
+4. **If it fails, read the exit code; it says why.**
+
+   | Code | Meaning | What to do |
+   |---|---|---|
+   | 5 | no image within `--timeout` | rerun once with a longer `--timeout`; the image subagent sometimes queues |
+   | 6 | Antigravity quota or usage limit (the message gives the reset time) | stop and tell the user when it resets; do not retry |
+   | 7 | `agy` is not signed in | ask the user to run `agy` once to sign in |
+   | 8 | the agent ended its turn without an image (a refused prompt, a tool error); its words follow | rephrase the prompt once, then tell the user |
+
+   gen-image reads Antigravity's transcripts while it waits, so 6, 7 and 8 come within seconds
+   instead of after the timeout. If `agy` is missing, say so; do not fall back to drawing images
    with code.
