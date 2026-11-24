@@ -630,6 +630,12 @@ function accountsCard(c, save, msg, say) {
     h('label', { for: 'acRet' }, t('ac.return')),
     h('div', {}, h('label', { class: 'switch' }, h('input', { id: 'acRet', type: 'checkbox', checked: (c.CONDUCTOR_ACCOUNT_RETURN || '1') === '1', onchange: e => save({ conductor: { CONDUCTOR_ACCOUNT_RETURN: e.target.checked ? '1' : '0' } }, aMsg) }), h('span', {}))),
     h('div', { class: 'hint' }, t('ac.returnHint')),
+    h('label', { for: 'acBridge' }, t('ac.bridge')),
+    h('div', {}, h('label', { class: 'switch' }, h('input', { id: 'acBridge', type: 'checkbox', checked: (c.CONDUCTOR_ACCOUNT_CONNECTORS || '1') === '1', onchange: e => save({ conductor: { CONDUCTOR_ACCOUNT_CONNECTORS: e.target.checked ? '1' : '0' } }, aMsg) }), h('span', {}))),
+    h('div', { class: 'hint' }, t('ac.bridgeHint')),
+    h('label', { for: 'acChrome' }, t('ac.chrome')),
+    h('div', {}, h('label', { class: 'switch' }, h('input', { id: 'acChrome', type: 'checkbox', checked: (c.CONDUCTOR_ACCOUNT_CHROME || '1') === '1', onchange: e => save({ conductor: { CONDUCTOR_ACCOUNT_CHROME: e.target.checked ? '1' : '0' } }, aMsg) }), h('span', {}))),
+    h('div', { class: 'hint' }, t('ac.chromeHint')),
     h('label', { for: 'acThr' }, t('ac.threshold')),
     h('input', { id: 'acThr', type: 'number', min: 50, max: 100, value: c.CONDUCTOR_ACCOUNT_THRESHOLD, placeholder: '98', onchange: e => save({ conductor: { CONDUCTOR_ACCOUNT_THRESHOLD: e.target.value.trim() } }, aMsg) }),
     h('div', { class: 'hint' }, t('ac.thresholdHint')));

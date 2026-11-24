@@ -150,6 +150,7 @@ the flag before it are dropped.
 | `conductor-panel [open\|start\|stop\|restart\|status]` | control the dashboard |
 | `conductor-panel office [start\|stop\|status]` | control Pixel Agents on port 4748 |
 | `claude-account add\|login\|list\|status\|use\|remove [name]` | rotate between Claude accounts when one hits its limit (see below) |
+| `claude-account connectors` | the other accounts' connectors and Chrome browser this session reaches (account bridge) |
 
 The plugin puts these commands on Claude's PATH. To use them in your own shell, link them, for
 example: `ln -s "$PWD/bin/"* ~/.local/bin/`.
@@ -184,13 +185,46 @@ away; a session that was already running picks it up at its next token refresh, 
 and `claude --continue`. Saved sign-ins live in the macOS Keychain (elsewhere in
 `~/.claude/conductor/accounts/`, mode 600). Turn it off with `CONDUCTOR_ACCOUNTS=0`.
 
+### Connectors and Chrome of your other accounts
+
+claude.ai connectors (Figma, Notion, Google Drive, Atlassian, Meetings…) are added per claude.ai
+account, and the Claude in Chrome extension pairs with the account it is signed in to. So the
+connectors you added on your work account, or the browser whose extension is signed in to it, are
+missing from a session that runs on your personal account, and vanish when Conductor switches
+accounts.
+
+Conductor's **account bridge** keeps them all in every session, by default, as soon as two
+accounts are saved. It is an MCP server shipped with the plugin (`accounts`). For every saved
+account other than the one Claude Code is using, it offers:
+
+- that account's connectors which the active account does not have itself, as
+  `<account>_<connector>__<tool>` (e.g. `second_figma__get_screenshot`). Calls go through
+  Anthropic's MCP proxy with that account's sign-in, the same way Claude Code calls them;
+- the Chrome browser whose Claude extension is signed in to that account, as
+  `<account>_chrome__<tool>` (e.g. `second_chrome__navigate`), by running Claude Code's own
+  `claude --claude-in-chrome-mcp` with that account's sign-in. It starts on the first browser call.
+
+Neither sends a model request, so **an account at its usage limit still serves its connectors and
+its browser**. When the active account changes, the tools follow (the bridge tells Claude Code
+the list changed): the active account's own connectors and browser are always left to Claude
+Code.
+
+```bash
+claude-account connectors   # what the bridge offers right now, and why anything is skipped
+```
+
+Tool results from another account's connector are sent to the model on the account in use. If
+the two accounts belong to different organizations with data rules (ZDR, residency), decide
+whether that is fine; turn the bridge off with `CONDUCTOR_ACCOUNT_CONNECTORS=0`, or only its
+browser part with `CONDUCTOR_ACCOUNT_CHROME=0` (both are also switches on the dashboard).
+
 ## Configuration
 
 Everything can be set from the dashboard. These are the underlying files:
 
 | Path | Contents |
 |---|---|
-| `~/.config/conductor/conductor.env` | `CONDUCTOR_ORCHESTRATOR` (auto, claude, codex…), `CONDUCTOR_DELEGATION` (off, light, balanced, max), `CONDUCTOR_REPORT` (brief, full), `CONDUCTOR_TIMEOUT`, `CONDUCTOR_MAX_LINES`, `CONDUCTOR_PIXEL`, `CONDUCTOR_PANEL_AUTOSTART`, `CONDUCTOR_OFFICE_AUTOSTART`, `CONDUCTOR_OFFICE_HIDE`, `CONDUCTOR_BUDGET_DAILY` / `_MONTHLY`, `CONDUCTOR_ACCOUNTS`, `CONDUCTOR_ACCOUNT_THRESHOLD`, `CONDUCTOR_ACCOUNT_RETURN`, `CONDUCTOR_ACCOUNT_POLL`, `CONDUCTOR_ACCOUNT_REFRESH`, `CONDUCTOR_ACCOUNT_RESUME` |
+| `~/.config/conductor/conductor.env` | `CONDUCTOR_ORCHESTRATOR` (auto, claude, codex…), `CONDUCTOR_DELEGATION` (off, light, balanced, max), `CONDUCTOR_REPORT` (brief, full), `CONDUCTOR_TIMEOUT`, `CONDUCTOR_MAX_LINES`, `CONDUCTOR_PIXEL`, `CONDUCTOR_PANEL_AUTOSTART`, `CONDUCTOR_OFFICE_AUTOSTART`, `CONDUCTOR_OFFICE_HIDE`, `CONDUCTOR_BUDGET_DAILY` / `_MONTHLY`, `CONDUCTOR_ACCOUNTS`, `CONDUCTOR_ACCOUNT_THRESHOLD`, `CONDUCTOR_ACCOUNT_RETURN`, `CONDUCTOR_ACCOUNT_POLL`, `CONDUCTOR_ACCOUNT_REFRESH`, `CONDUCTOR_ACCOUNT_RESUME`, `CONDUCTOR_ACCOUNT_CONNECTORS`, `CONDUCTOR_ACCOUNT_CHROME` |
 | `~/.config/conductor/workers.json` | per-worker `enabled` / `model` / `goodAt` / `pool` (`[{ model, weight }]`), plus `custom` CLI definitions |
 | `~/.config/conductor/endpoints.json` | OpenAI-compatible endpoints with their secrets (mode 600); a 0.2 `local.env` is migrated automatically |
 | `~/.config/conductor/pricing.json` | price overrides per model |
@@ -269,3 +303,10 @@ Birden fazla Claude aboneliğin varsa: `claude-account add main` mevcut hesabı 
 ya da haftalık limite gelince Conductor Claude Code'u sıradaki hesaba geçirir; MCP girişleri ve
 ayarlar değişmez. Yeni oturumlar yeni hesabı hemen kullanır; açık oturum bir sonraki token
 yenilemesinde ya da `/exit` + `claude --continue` ile geçer.
+
+Hesap köprüsü (varsayılan açık): bir hesaba eklenmiş claude.ai bağlayıcıları (Figma, Notion,
+Drive…) ve Claude uzantısı o hesapla oturum açmış Chrome, Claude Code hangi hesapla çalışırsa
+çalışsın her oturumda `<hesap>_<bağlayıcı>__<araç>` ve `<hesap>_chrome__<araç>` araçlarıyla
+kullanılabilir. Çağrılar o hesabın girişiyle yapılır ve model kotası harcamaz; limitteki hesabın
+bağlayıcıları da çalışır. `claude-account connectors` neyin açık olduğunu gösterir;
+`CONDUCTOR_ACCOUNT_CONNECTORS=0` kapatır.

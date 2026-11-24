@@ -28,6 +28,8 @@ const CONDUCTOR_KEYS = {
   CONDUCTOR_ACCOUNT_RESUME: v => v === '' || v === '0' || v === '1',
   CONDUCTOR_ACCOUNT_REFRESH: v => v === '' || v === '0' || v === '1',
   CONDUCTOR_ACCOUNT_POLL: v => v === '' || (/^\d+$/.test(v) && +v >= 60 && +v <= 3600),
+  CONDUCTOR_ACCOUNT_CONNECTORS: v => v === '' || v === '0' || v === '1',
+  CONDUCTOR_ACCOUNT_CHROME: v => v === '' || v === '0' || v === '1',
 };
 
 function readEnv(file) {

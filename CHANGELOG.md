@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.11.0
+
+### Added
+
+- **Account bridge: connectors and Chrome of every saved Claude account, in every session.**
+  claude.ai connectors are added per account and the Claude in Chrome extension pairs with the
+  account it is signed in to, so a session on one account could not reach the Figma, Notion or
+  Atlassian connector added on the other, or the browser signed in to it, and an account switch
+  took them away mid-task. The plugin now ships an MCP server (`accounts`, `lib/connectors.js`)
+  that offers, for every saved account other than the active one, the connectors the active
+  account lacks (`<account>_<connector>__<tool>`, called through Anthropic's MCP proxy with that
+  account's sign-in) and its Chrome browser (`<account>_chrome__<tool>`, Claude Code's own
+  `--claude-in-chrome-mcp` run with that account's sign-in, started on the first browser call).
+  No model request is involved, so an account at its usage limit still serves them. When the
+  active account changes, the tool list follows (`tools/list_changed`). On by default once two
+  accounts are saved; `CONDUCTOR_ACCOUNT_CONNECTORS=0` / `CONDUCTOR_ACCOUNT_CHROME=0` and two
+  dashboard switches turn it off. `claude-account connectors` shows what is bridged and why
+  anything was skipped (a connector not signed in on claude.ai, a sign-in without connector
+  access).
+
 ## 0.10.0
 
 ### Fixed
