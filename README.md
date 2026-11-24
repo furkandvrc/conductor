@@ -1,5 +1,11 @@
 # Conductor
 
+[![CI](https://github.com/furkandvrc/conductor/actions/workflows/ci.yml/badge.svg)](https://github.com/furkandvrc/conductor/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/furkandvrc/conductor)](https://github.com/furkandvrc/conductor/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](#install)
+[![Codex plugin](https://img.shields.io/badge/Codex-plugin-10a37f)](#install)
+
 **One agent orchestrates; other models do the volume work.**
 
 Conductor is a plugin for **Claude Code** and **Codex**. The agent you are talking to, Claude
